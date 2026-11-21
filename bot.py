@@ -538,7 +538,7 @@ class Bot:
             if "lightning" in kinds and energy > 15:
                 want = 28.0
             elif "laser" in kinds:
-                want = 120.0
+                want = 150.0
             else:
                 want = 90.0
             tw = target.get("weapons") or []
