@@ -500,6 +500,10 @@ class Bot:
                     s -= 60  # whoever is hurting us
                 if m["id"] == self.target_id:
                     s -= 25  # stickiness
+                # someone standing in a landed supply drop's ring freezes our capture: shoot them first
+                for dr in obs.get("drops") or []:
+                    if dr.get("lands_in", 0) <= 0 and d2(m["pos"], dr["pos"]) < dr.get("radius", 8.0) + 2 and d2(p, dr["pos"]) < 120:
+                        s -= 120
                 return s
             target = min(threats, key=score)[1]
             self.target_id = target["id"]
@@ -600,18 +604,29 @@ class Bot:
                     gv = self.steer(me, grab, t)
                     move = (gv[0] + px_ * 0.35, gv[1] + py_ * 0.35)
                     mode = "grab"
+                in_ring = False
                 if dgoal is not None:
-                    if d2(p, dgoal) > 3.5:
+                    landed = any(d2(dr["pos"], dgoal) < 1.0 and dr.get("lands_in", 0) <= 0 for dr in obs.get("drops") or [])
+                    if d2(p, dgoal) > 5.5 or not landed:
                         gv = self.steer(me, dgoal, t)
                         move = (gv[0] + px_ * 0.25, gv[1] + py_ * 0.25)
+                        mode = "drop"
                     else:
-                        move = (px_ * 0.3, py_ * 0.3)
-                    mode = "drop"
+                        # capturing: keep moving side to side inside the 8 m ring so we are harder to hit
+                        in_ring = True
+                        sx, sy = dgoal[0] + px_ * 4.0, dgoal[1] + py_ * 4.0
+                        ux, uy = unit(sx - p[0], sy - p[1])
+                        k = min(1.0, d2(p, (sx, sy)) / 2.0)
+                        move = (ux * k, uy * k)
+                        mode = "ring"
                 # boost-strafe when under fire and we can afford it (keep energy for lightning)
                 reserve = 35 if "lightning" in kinds else 20
                 boost = energy > reserve and (recent_dmg > 0 or dist < 160)
                 # dodge an aimed laser: if they charge at us, break the line sideways hard
                 charging = [m for dd, m in threats if m.get("charging") and dd < 290]
+                if in_ring:
+                    boost = False
+                    charging = []  # never leave the ring mid-capture
                 if charging:
                     # an enemy laser is charging: get out of its line of sight if cover is a short dash away
                     cov = self.find_cover(obs, me, [m["pos"] for m in charging], t, radius=22.0, short=True)
