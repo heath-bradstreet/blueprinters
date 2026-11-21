@@ -110,7 +110,6 @@ class Bot:
         self.known_pickups = {}  # id -> (kind, pos, seen_t)
         self.known_crates = {}  # id -> (pos, seen_t)
         self.known_cubes = {}  # id -> (pos, seen_t)
-        self.known_npcs = {}  # id -> (pos, seen_t)
         self.cover_t = -99.0
         self.t_start = time.perf_counter()
 
@@ -323,13 +322,6 @@ class Bot:
             self.known_crates[c["id"]] = (tuple(c["pos"]), t)
         for c in obs["cubes"]:
             self.known_cubes[c["id"]] = (tuple(c["pos"]), t)
-        for m in obs["mechs"]:
-            if m.get("kind") == "npc":
-                self.known_npcs[m["id"]] = (tuple(m["pos"]), t)
-        for i in list(self.known_npcs):
-            q, seen = self.known_npcs[i]
-            if t - seen > 30.0 or (seen < t and d2(p, q) < 80):
-                del self.known_npcs[i]
         vis_p = {x["id"] for x in obs["pickups"]}
         vis_c = {x["id"] for x in obs["crates"]}
         vis_q = {x["id"] for x in obs["cubes"]}
@@ -737,15 +729,6 @@ class Bot:
                 s = dd + (0 if want_weapon else 40)
                 if best is None or s < best[0]:
                     best = (s, (pos[0], pos[1]), "crate")
-        # NPC drones: 2 cubes each; walk into laser/gun range of one we know about while healthy
-        if hp_frac > 0.6:
-            for nid, (pos, seen) in self.known_npcs.items():
-                dd = d2(p, pos)
-                if dd > 220 or dd < 60 or not self.in_current(obs, pos, 10):
-                    continue
-                s = dd - 50
-                if best is None or s < best[0]:
-                    best = (s, (pos[0], pos[1]), "npc")
         for dr in obs.get("drops") or []:
             dd = d2(p, dr["pos"])
             if dd > 220 or dr.get("lands_in", 0) > 12:
