@@ -526,7 +526,7 @@ class Bot:
         if target is not None:
             # outgunned: low HP vs healthier enemy, or several enemies on us
             ehp = target.get("hp", 1400)
-            if (hp_frac < 0.4 and ehp > me["hp"] * 1.3) or (n_threats >= 3 and hp_frac < 0.6) or \
+            if (hp_frac < 0.5 and ehp > me["hp"] * 1.3) or (n_threats >= 3 and hp_frac < 0.6) or \
                (n_threats >= 2 and hp_frac < 0.4) or (hp_frac < 0.22 and ehp > 200):
                 retreat = True
 
