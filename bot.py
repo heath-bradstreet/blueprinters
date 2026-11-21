@@ -783,10 +783,12 @@ class Bot:
             return getattr(self, "stage_pt", None) if getattr(self, "stage_q", None) == q else None
         A = self.arena
         p = me["pos"]
-        th = [tr.pos for tr in self.tracks.values() if t - tr.seen_t < 10.0]
+        th = sorted((tr.pos for tr in self.tracks.values() if t - tr.seen_t < 10.0), key=lambda z: d2(q, z))[:4]
         best = None
         for r in (14.0, 24.0, 36.0):
             for k in range(14):
+                if self.spent() > 0.020:
+                    break  # time guard: keep well inside the 50 ms budget
                 a = TAU * k / 14
                 x, y = q[0] + r * math.cos(a), q[1] + r * math.sin(a)
                 c = A.ncell(x, y)
