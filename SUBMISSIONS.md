@@ -13,3 +13,4 @@ Best score is entered in the final automatically; we never pick anything else.
 | Fri 9:24 PM | BB-9BE3AB54 | f0ebb57 | Halve per-decision search budgets (path 6 ms, cover 5/8 ms, A* 1500) | 2.42 vs 2.39, p99 8.5 -> 5.4 ms | **3.81** (best) |
 | Fri 9:37 PM | BB-FFAE974E | ce69674 | Smaller search budgets again (path 4 ms, cover 3/5 ms, peek 5 ms, A* 1000) + gc.freeze after hello | 2.38 vs 2.39, p99 5.4 -> 4.9 ms | **3.92** (best) |
 | Fri 9:57 PM | BB-55FB5B96 | 0b7c10e | Same decisions, less compute (incremental LOS, pruned cover search, inlined A* heuristic) | 2.38 vs 2.36, p99 4.6 -> 3.6 ms | 3.90 (final stays ce69674) |
+| Fri 10:09 PM | BB-E1545419 | baf3c05 | Reuse cover spot 2.5 s, replan paths every 1.0 s | 2.41 vs 2.38 (level) | 3.77 (reverted) |
