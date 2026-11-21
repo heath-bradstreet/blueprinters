@@ -111,7 +111,6 @@ class Bot:
         self.known_crates = {}  # id -> (pos, seen_t)
         self.known_cubes = {}  # id -> (pos, seen_t)
         self.cover_t = -99.0
-        self.kill_spots = []  # (pos, t): where a mech we killed dropped its cubes
         self.t_start = time.perf_counter()
 
     # ------------------------------------------------------------------ helpers
@@ -463,14 +462,8 @@ class Bot:
         self.t = t
         me = obs["self"]
         p = me["pos"]
-        for ev in obs.get("events") or []:
-            if ev.get("type") == "kill":
-                tr = self.tracks.get(ev.get("target"))
-                if tr is not None:
-                    self.kill_spots.append(((tr.pos[0], tr.pos[1], tr.pos[2]), t))
         self.update_tracks(obs)
         self.remember_items(obs, me)
-        self.kill_spots = [(q, kt) for (q, kt) in self.kill_spots if t - kt < 25.0 and d2(p, q) > 3.0]
         act = {"tick": obs["tick"]}
 
         # upgrades
@@ -537,6 +530,9 @@ class Bot:
                 retreat = True
 
         dgoal = self.drop_goal(obs, me)
+        if dgoal is not None and hp_frac < 0.5 and d2(p, dgoal) > 60 and (threats or recent_dmg > 0) and \
+                any(dr.get("lands_in", 0) <= 0 and d2(dr["pos"], dgoal) < 1.0 for dr in obs.get("drops") or []):
+            dgoal = None  # a landed drop waits: shake off the fight first instead of marching to it under fire
         if target is not None:
             tp = target["pos"]
             dist = d2(p, tp)
@@ -607,10 +603,6 @@ class Bot:
                         move = (move[0] + zx * 1.2, move[1] + zy * 1.2)
                 # a better weapon or a cube close by is worth a detour mid-fight (still facing the target)
                 grab = self.fight_grab(obs, me, kinds, dist)
-                if grab is None and hp_frac > 0.3:
-                    ks = [q for (q, kt) in self.kill_spots if d2(p, q) < 80.0 and abs(q[2] - p[2]) < 5]
-                    if ks:
-                        grab = min(ks, key=lambda q: d2(p, q))[:2]
                 if grab is not None:
                     gv = self.steer(me, grab, t)
                     move = (gv[0] + px_ * 0.35, gv[1] + py_ * 0.35)
@@ -665,11 +657,6 @@ class Bot:
                     if cov is not None:
                         goal = cov
                         mode = "heal"
-            if goal is None and self.kill_spots:
-                ks = [q for (q, kt) in self.kill_spots if d2(p, q) < 150 and abs(q[2] - p[2]) < 5]
-                if ks:
-                    goal = min(ks, key=lambda q: d2(p, q))[:2]
-                    mode = "cube"
             if goal is None:
                 goal, mode = self.loot_goal(obs, me, kinds, hp_frac)
             if goal is None and zone_goal is not None:
@@ -788,7 +775,7 @@ class Bot:
                 continue
             q = dr["pos"]
             dd = d2(p, q)
-            if dd > 320 or not self.in_current(obs, q, 5.0):
+            if dd > (500 if dr.get("lands_in", 0) <= 0 else 320) or not self.in_current(obs, q, 5.0):
                 continue
             eta = dd / max(1.0, speed)
             if dr.get("lands_in", 0) - eta > 6.0:
