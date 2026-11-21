@@ -87,6 +87,18 @@ MAX_WORKERS = 8
 #: rather than "which tests this change can alter" -- is not that sharp.
 EXPENSIVE_MS = 5_000
 
+#: Test files for sqlglot's dialect-agnostic machinery. A dialect module is a
+#: declarative class body consumed by this shared code, so changing it can break
+#: these without touching any per-dialect test file.
+GENERIC_TEST_FILES = (
+    "tests/test_time.py",
+    "tests/test_parser.py",
+    "tests/test_generator.py",
+    "tests/test_transpile.py",
+    "tests/test_lineage.py",
+    "tests/test_expressions.py",
+)
+
 # sqlglot splits every dialect across these sibling directories.
 DIALECT_DIRS = ("dialects", "parsers", "generators", "typing", "tokenizers")
 
@@ -219,6 +231,7 @@ class Selector:
         self.translate = translate
         self.all_tests = {t["number"] for t in tests}
         self.num_of = {t["id"]: t["number"] for t in tests}
+        self.dur = {t["number"]: round(t["seconds"] * 1000) for t in tests}
         self.tests_by_file: dict[str, set[int]] = {}
         for t in tests:
             self.tests_by_file.setdefault(t["file"], set()).add(t["number"])
@@ -274,6 +287,29 @@ class Selector:
         # The dialect's own tests, plus those of every dialect inheriting from it.
         for name in self.dialect_tree.get(stem, (stem,)):
             out |= self.tests_by_file.get("tests/dialects/test_%s.py" % name, set())
+        # ...and the SHARED dialect tests. tests/dialects/test_dialect.py holds
+        # the cross-dialect cases -- test_enum, test_logarithm, test_transactions
+        # -- which transpile one statement across many dialects at once, so a
+        # change to any single dialect module can break them while touching no
+        # per-dialect test file at all. Measured: four corpus cases
+        # (starrocks.py, presto.py, redshift.py, dremio.py) failed exactly these
+        # and nothing else we were missing. They are 3-26 ms tests, so the
+        # insurance is nearly free against a 300 s penalty.
+        out |= self.tests_by_file.get("tests/dialects/test_dialect.py", set())
+        # ...and the CHEAP tests of the generic machinery a dialect's class body
+        # feeds. A dialect module is a declarative table consumed by the shared
+        # parser, generator, time-format and lineage code, so a one-token change
+        # to it can break tests in tests/test_time.py, tests/test_parser.py or
+        # tests/test_generator.py while touching no dialect test file -- and
+        # coverage cannot see it, because those lines execute once at import
+        # (36 of 184 source files have <=3 covering tests). Measured on the
+        # corpus: starrocks.py broke 30 tests across SIX files.
+        #
+        # Bounded by the same break-even rule as everything else: only tests
+        # under EXPENSIVE_MS ride along, so this buys recall insurance at a few
+        # milliseconds each rather than dragging in the 21 s executor tests.
+        for f in GENERIC_TEST_FILES:
+            out |= {n for n in self.tests_by_file.get(f, ()) if self.dur.get(n, 0) < EXPENSIVE_MS}
         return out
 
     def _filemap_tests(self, path: str) -> tuple[set[int], bool]:
@@ -456,6 +492,16 @@ class Selector:
                 fam = self._dialect_family(path) if self._is_dialect(path) else set()
                 if fam:
                     sel |= fam
+                    # The dialect family is STRONG evidence, not a backstop
+                    # guess: "the tests of dialect X live in
+                    # tests/dialects/test_X.py" is sqlglot's own test
+                    # organisation, and the inheritance closure is read from
+                    # sqlglot itself. Omitting it from `strong` let the
+                    # expensive-test trim below delete tests the family had
+                    # legitimately selected -- a recall hole, and one that made
+                    # ADDING tests appear to INCREASE misses, which is
+                    # impossible and is what exposed it.
+                    strong |= fam
                 else:
                     got = self._symref_tests(path, modlines)
                     if got is None:
