@@ -76,7 +76,9 @@ class Bot:
     def __init__(self, hello):
         self.cfg = hello["config"]
         self.slot = int(hello.get("slot", 0))
-        self.rng = random.Random(int(hello.get("seed", 1)) ^ 0x5EED ^ 0x101)
+        self.healing = False
+        self.hold_fire = False
+        self.rng = random.Random(int(hello.get("seed", 1)) ^ 0x5EED)
         mp = hello.get("map") or {}
         t0 = time.perf_counter()
         self.arena = Arena(mp.get("dir", "/arena"), mp.get("files"))
@@ -524,6 +526,22 @@ class Bot:
             if (hp_frac < 0.5 and ehp > me["hp"] * 1.3) or (n_threats >= 3 and hp_frac < 0.6) or \
                (n_threats >= 2 and hp_frac < 0.4) or (hp_frac < 0.22 and ehp > 200):
                 retreat = True
+                self.healing = True
+        # heal lock: once we have backed off, stay out until regen has us near full
+        # (regen needs 5 s without dealing or taking damage, so also hold fire meanwhile)
+        if self.healing and (hp_frac >= 0.9 or (urgency > 0.6 and not self.in_current(obs, p, 0.0))):
+            self.healing = False
+        self.hold_fire = False
+        if self.healing:
+            if target is not None:
+                ehp = target.get("hp", 1400)
+                finishing = ehp <= 300 and d2(p, target["pos"]) < 200
+                if not finishing:
+                    retreat = True
+                    # shooting back is free while they're hitting us; otherwise keep quiet to let regen start
+                    self.hold_fire = t - self.last_damage_t > 1.5
+            else:
+                self.hold_fire = True
 
         if target is not None:
             tp = target["pos"]
@@ -911,6 +929,10 @@ class Bot:
                     fire[i] = True  # keep holding a charge we started (it will auto-fire eventually)
         if aimv is not None:
             act["aim"] = [round(aimv[0], 4), round(max(-0.69, min(1.29, aimv[1])), 4)]
+        if self.hold_fire:
+            # healing: don't reset the regen timer (keep holding a laser charge so it isn't wasted)
+            fire = [bool(f and w is not None and w["kind"] == "laser" and w.get("charge", 0) > 0 and False)
+                    for f, w in zip(fire, me["weapons"])]
         act["fire"] = fire
 
     def alt_target(self, obs, me):
@@ -918,7 +940,7 @@ class Bot:
         p = me["pos"]
         hp_frac = me["hp"] / max(1.0, me["max_hp"])
         best = None
-        if hp_frac > 0.6:
+        if hp_frac > 0.9:
             for m in obs["mechs"]:
                 if m.get("kind") != "npc":
                     continue
