@@ -499,7 +499,9 @@ class Bot:
             def score(item):
                 dd, m = item
                 hpv = m.get("hp", 1400)
-                s = dd + hpv * 0.06
+                s = dd + hpv * 0.10
+                if hpv <= 350:
+                    s -= 80  # one laser / short burst finishes it: take the kill
                 tr = self.tracks.get(m["id"])
                 if tr is not None and t - tr.last_dmg_t < 3.0:
                     s -= 60  # whoever is hurting us
