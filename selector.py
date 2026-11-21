@@ -265,6 +265,30 @@ class Selector:
             self.dialect_refs = acc
         except Exception as exc:  # noqa: BLE001
             print(f"dialectrefs.json unavailable ({exc!r})", file=sys.stderr)
+        #: Cheap tests of the shared vocabulary: every dialect's own tests, the
+        #: generic machinery files, and the optimizer's. A module-level change
+        #: to sqlglot/expressions/** changes the AST vocabulary itself --
+        #: `_sql_names` is the SQL function-name registry, `arg_types` the node
+        #: shape -- and the parser, every generator and the optimizer's
+        #: annotators all consume it generically. No test names it, so no other
+        #: rung reaches it.
+        self.vocab_tests = {
+            n
+            for t in tests
+            if (
+                t["file"].startswith("tests/dialects/")
+                or t["file"] in GENERIC_TEST_FILES
+                or t["file"] == "tests/test_optimizer.py"
+            )
+            and (n := t["number"]) is not None
+            and round(t["seconds"] * 1000) < EXPENSIVE_MS
+        }
+        #: Every cheap test. Used only for sqlglot/dialects/__init__.py, the
+        #: lazy loader that anything touching any dialect imports.
+        self.all_cheap = {
+            t["number"] for t in tests if round(t["seconds"] * 1000) < EXPENSIVE_MS
+        }
+
         # Function-signature line ranges -> that function's body range. A
         # changed default argument is lexically module level (it runs at `def`
         # time) but its value is consumed on every call, so the right question
@@ -362,11 +386,19 @@ class Selector:
             # expensive, so the exposure is 6.7 s on the rare commit that
             # touches the loader.
             out |= set(self.crossdialect)
-            for f in GENERIC_TEST_FILES:
-                out |= {
-                    n for n in self.tests_by_file.get(f, ())
-                    if self.dur.get(n, 0) < EXPENSIVE_MS
-                }
+            # Everything that touches any dialect imports this module, and
+            # measurement bears that out: a change here broke optimizer tests
+            # (test_annotate_funcs, test_pushdown_predicates) as well as
+            # dialect ones. So take every cheap test. Still bounded by the
+            # break-even rule, so the 21 s executor tests stay out.
+            # ...and no cost bound at all. 1 of 3 measured cases here broke
+            # the 21.45 s TPC-DS executor test, i.e. 33% against a 7.2%
+            # break-even, so even the most expensive test in the suite pays for
+            # itself on this file. That is the honest position: we have no
+            # reliable model of the loader's blast radius, every dialect
+            # resolves through it, and it is one file out of 184 -- so the rare
+            # commit that touches it should simply run everything.
+            out |= set(self.all_tests)
             return out
         out: set[int] = set()
         for d in DIALECT_DIRS:
@@ -624,6 +656,16 @@ class Selector:
                 strong_here = bool(hit)
 
             # 4. module-level changes need a backstop
+            if modlines and path.startswith("sqlglot/expressions/"):
+                # The AST vocabulary. Measured on verified corpus cases:
+                # flipping one string in expressions/math.py's
+                # `_sql_names = ["IS_NAN", "ISNAN"]` breaks test_clickhouse,
+                # test_isnan and test_presto, and expressions/functions.py
+                # breaks test_annotate_funcs. Those names decide what SQL text
+                # parses to the node, so the blast radius is every dialect plus
+                # the optimizer -- generically, with nothing naming it.
+                sel |= self.vocab_tests
+                strong |= self.vocab_tests
             if modlines:
                 # _dialect_family unions in the dialect's own test file, so it
                 # is non-empty for ANY sqlglot/<dir>/<stem>.py whose stem
