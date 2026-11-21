@@ -81,6 +81,12 @@ WORKER_MS = 2_000
 MISS_MS = 300_000
 MAX_WORKERS = 8
 
+#: A test at or above this duration is not run on backstop-only evidence. Its
+#: break-even failure probability (duration / 300_000 ms) is then >= 1.7%, and
+#: the module-level backstop -- which answers "which tests reference this name"
+#: rather than "which tests this change can alter" -- is not that sharp.
+EXPENSIVE_MS = 5_000
+
 # sqlglot splits every dialect across these sibling directories.
 DIALECT_DIRS = ("dialects", "parsers", "generators", "typing", "tokenizers")
 
@@ -198,6 +204,12 @@ class Selector:
         self.modlevel_cov = os.environ.get("BR_MODLEVEL_COV", "1") != "0"
         # {dialect: itself and every dialect inheriting from it}. Missing file
         # degrades to "just this dialect", which is the old, thinner behaviour.
+        # Tests expensive enough that backstop-only evidence does not pay for
+        # them. Derived from tests.json's own durations and the scorer's 300 s
+        # miss penalty -- no label, no fitted constant. At 5 s the break-even
+        # failure probability is 5000/300000 = 1.7%.
+        self.expensive = {n for t in tests if (n := t["number"]) is not None
+                          and round(t["seconds"] * 1000) >= EXPENSIVE_MS}
         self.dialect_tree: dict[str, list[str]] = {}
         try:
             with open(os.path.join(MAPS, "dialect_tree.json"), "rb") as fh:
@@ -264,13 +276,20 @@ class Selector:
             out |= self.tests_by_file.get("tests/dialects/test_%s.py" % name, set())
         return out
 
-    def _filemap_tests(self, path: str) -> set[int]:
+    def _filemap_tests(self, path: str) -> tuple[set[int], bool]:
+        """(tests, is_widen). is_widen means we had NO per-file evidence.
+
+        A path absent from the filemap -- sqlglot/__main__.py is the one such
+        file, never imported under coverage -- yields the whole suite. That is
+        a widen, not an answer, so the caller must not then trim expensive
+        tests out of it: there is no evidence to trim against.
+        """
         if self.aux is None:
-            return set(self.all_tests)
+            return set(self.all_tests), True
         hit = self.aux.filemap_tests(path)
         if not hit:
-            return set(self.all_tests)
-        return self._xlate(hit)
+            return set(self.all_tests), True
+        return self._xlate(hit), False
 
     def _symref_tests(self, path: str, modlines: set[int]):
         """Tests that execute a line REFERENCING what the changed line binds.
@@ -318,6 +337,28 @@ class Selector:
         if self.cov is None or self.aux is None:
             return set(self.all_tests)
 
+        # An EXPENSIVE test justified ONLY by the module-level backstop is not
+        # worth running. Measured over 232 generated cases: of the times
+        # test_execute_tpcds (21.45 s) was selected without failing, 39 came
+        # from the backstop and only 4 from line coverage. The backstop is a
+        # deliberate over-approximation -- it answers "which tests reference
+        # this name", not "which tests this change can alter" -- so for a test
+        # whose own break-even probability is high, that evidence is too thin
+        # to pay for.
+        #
+        # The rule follows the scorer's constants, not the labels: include t iff
+        # P(t fails) * 300_000 ms > marginal cost of t. At 5 s the break-even
+        # probability is 1.7%; the measured rate for backstop-only selections of
+        # such tests is 0 of 50. Cheap tests keep riding along as before, which
+        # is where recall actually comes from.
+        #
+        # `strong` accumulates the same selection from evidence we trust:
+        # fixture reads, a changed test module, and line coverage inside a
+        # function body. Anything only in `sel` and not in `strong` reached us
+        # via the backstop alone.
+        strong: set[int] = set(self.ride_along)
+        widened = False
+
         sel = set(self.ride_along)
         for path, lines in changed.items():
             # 1. data fixtures are read, not imported
@@ -325,6 +366,7 @@ class Selector:
                 hit = self.aux.tests_for_fixture(path)
                 if hit:
                     sel |= self._xlate(hit)
+                    strong |= self._xlate(hit)
                 else:
                     # Unknown fixture: take every test reading anything in its
                     # directory. A new fixture file is exactly the case where we
@@ -335,6 +377,7 @@ class Selector:
                         siblings |= self.aux.tests_for_fixture(p)
                     if siblings:
                         sel |= self._xlate(siblings)
+                        strong |= self._xlate(siblings)
                     else:
                         # A fixture in a directory we have never measured at
                         # all. There is no evidence to narrow with, and
@@ -362,8 +405,11 @@ class Selector:
             #    costs nothing in the common case (test_optimizer.py: 167 and
             #    167). A module absent from that map widens, as ever.
             if path.startswith("tests/") and path.endswith(".py"):
-                sel |= self.tests_by_file.get(path, set())
-                sel |= self._filemap_tests(path)
+                fm, fm_widened = self._filemap_tests(path)
+                own = self.tests_by_file.get(path, set()) | fm
+                sel |= own
+                strong |= own
+                widened = widened or fm_widened
                 continue
 
             # 5a. a non-Python file we have no model for
@@ -389,7 +435,9 @@ class Selector:
                 # arbitrary attribution happened to be load-bearing.
                 cov_lines = lines - modlines
             if cov_lines:
-                sel |= self._xlate(self.cov.tests_for_lines(path, cov_lines))
+                hit = self._xlate(self.cov.tests_for_lines(path, cov_lines))
+                sel |= hit
+                strong |= hit
 
             # 4. module-level changes need a backstop
             if modlines:
@@ -398,8 +446,18 @@ class Selector:
                     sel |= fam
                 else:
                     got = self._symref_tests(path, modlines)
-                    sel |= self._filemap_tests(path) if got is None else got
+                    if got is None:
+                        fm, fm_widened = self._filemap_tests(path)
+                        sel |= fm
+                        widened = widened or fm_widened
+                    else:
+                        sel |= got
 
+        # Trim expensive tests that only the backstop justified. Skipped
+        # entirely if any path widened, because then we have no evidence to
+        # reason from and the whole selection is already the safe answer.
+        if not widened:
+            sel -= (sel - strong) & self.expensive
         return sel & self.all_tests
 
 
