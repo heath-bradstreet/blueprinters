@@ -18,3 +18,4 @@ Best score is entered in the final automatically; we never pick anything else.
 | Fri 10:39 PM | BB-412C3122 | 248f381 | Retreat earlier when outgunned (hp < 60% instead of 50%) | level (2.36) | 3.77 (reverted) |
 | Fri 10:58 PM | BB-05EA9E01 | ce69674 | Repeat of best, unchanged (noise check) | - | **3.94** (final; repeat confirms scores reproduce within ~0.02) |
 | Fri 11:10 PM | BB-57ED2D98 | 73a8010 | Retreat later when outgunned (hp < 40%) | - | 3.85 (reverted; scorer queue took 30 min) |
+| Fri 11:46 PM | BB-B5FD5E16 | e5ab1a4 | Hold laser fights at 150 m instead of 120 m | - | 3.69 (reverted) |
