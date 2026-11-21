@@ -841,7 +841,7 @@ class Bot:
                     rng_ = st.get("range", 230)
                     tspd = math.hypot(tv[0], tv[1])
                     reach_ok = dist < 125 or tspd < 4.0 or (dist < 175 and tspd < 9.0) or tgt.get("kind") != "mech"
-                    if dist < rng_ - 5 and reach_ok and clear and ang_err < tol * 2.5 and w.get("reload", 0) <= 0 and w.get("ammo", 1) > 0:
+                    if dist < rng_ - 5 and reach_ok and clear and ang_err < tol * 1.4 and w.get("reload", 0) <= 0 and w.get("ammo", 1) > 0:
                         fire[i] = True
                 elif k == "lightning":
                     rng_ = st.get("range", 45)
