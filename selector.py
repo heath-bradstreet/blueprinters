@@ -193,6 +193,9 @@ class Selector:
         self.cov = cov
         self.aux = aux
         self.symref = symref
+        # Whether coverage is consulted about module-level changed lines. See
+        # rung 3. BR_MODLEVEL_COV=0 selects the tighter, less defensive answer.
+        self.modlevel_cov = os.environ.get("BR_MODLEVEL_COV", "1") != "0"
         self.translate = translate
         self.all_tests = {t["number"] for t in tests}
         self.num_of = {t["id"]: t["number"] for t in tests}
@@ -336,10 +339,23 @@ class Selector:
                 return set(self.all_tests)
 
             # 3. function-body changes: precise line coverage
-            sel |= self._xlate(self.cov.tests_for_lines(path, lines))
+            modlines = self.aux.module_level_lines(path, lines)
+            if self.modlevel_cov:
+                cov_lines = lines
+            else:
+                # Ask coverage only about lines it can answer for. A
+                # module-level line executes once, at import during collection,
+                # so coverage credits it to no test or to one arbitrary test --
+                # the answer is not wrong so much as meaningless, and symref
+                # covers those lines properly on rung 4. Dropping them here is
+                # worth ~31 s projected. It is OFF by default because
+                # docs/SOUNDNESS.md records one sample commit (rszg) where that
+                # arbitrary attribution happened to be load-bearing.
+                cov_lines = lines - modlines
+            if cov_lines:
+                sel |= self._xlate(self.cov.tests_for_lines(path, cov_lines))
 
             # 4. module-level changes need a backstop
-            modlines = self.aux.module_level_lines(path, lines)
             if modlines:
                 fam = self._dialect_family(path)
                 if fam:
