@@ -767,7 +767,9 @@ class Bot:
         speed = me["stats"].get("walk_speed", 11.7) * 0.8
         best = None
         for dr in obs.get("drops") or []:
-            # someone else capturing it: still go - standing in the ring freezes their clock, and we shoot them first
+            hold = dr.get("holder")
+            if hold is not None and hold != me["id"]:
+                continue
             q = dr["pos"]
             dd = d2(p, q)
             if dd > 320 or not self.in_current(obs, q, 5.0):
