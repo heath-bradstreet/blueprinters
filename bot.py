@@ -750,7 +750,7 @@ class Bot:
                     best = (s, (pos[0], pos[1]), "crate")
         for dr in obs.get("drops") or []:
             dd = d2(p, dr["pos"])
-            if dd > 220 or dr.get("lands_in", 0) > 12:
+            if dd > 700 or dr.get("lands_in", 0) > 20:
                 continue
             if dr.get("holder") is not None and dr.get("holder") != me["id"]:
                 continue
@@ -772,10 +772,10 @@ class Bot:
                 continue
             q = dr["pos"]
             dd = d2(p, q)
-            if dd > 320 or not self.in_current(obs, q, 5.0):
+            if dd > 700 or not self.in_current(obs, q, 5.0):
                 continue
             eta = dd / max(1.0, speed)
-            if dr.get("lands_in", 0) - eta > 6.0:
+            if dr.get("lands_in", 0) - eta > 12.0:
                 continue
             if best is None or dd < best[0]:
                 best = (dd, (q[0], q[1]), dr)
