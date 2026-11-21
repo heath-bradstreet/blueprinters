@@ -256,7 +256,10 @@ class Bot:
                 cands.append((p[0] + r * math.cos(a), p[1] + r * math.sin(a), r))
         if self.cover_spot is not None:
             cands.append((self.cover_spot[0], self.cover_spot[1], d2(p, self.cover_spot)))
+        cands.sort(key=lambda cd: cd[2])
         for (x, y, r) in cands:
+            if best is not None and best[2] == 0 and best[0] <= r:
+                break  # every remaining candidate scores >= r: cannot beat best
             c = A.ncell(x, y)
             if c < 0 or A.nblocked[c]:
                 continue
@@ -269,6 +272,8 @@ class Bot:
             for q in threats_xyz:
                 if A.los((q[0], q[1], q[2] + 8.0), (x, y, gz + 7.0)):
                     seen += 1
+                    if best is not None and best[2] == 0:
+                        break  # already have a hidden spot; this one loses
             s = seen * 1000 + r
             # avoid running past the threats to get there
             for q in threats_xyz:
