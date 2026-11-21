@@ -119,6 +119,11 @@ class Sim:
         self.hunters = set()
         self.dt = 1.0 / self.cfg["match"]["tick_hz"]
         self.times = []
+        self.stats = {}  # (weapon, 'shots'|'hits'|'dmg') for our mech
+        self.failures = 0
+
+    def stat(self, w, k, n=1):
+        self.stats[(w, k)] = self.stats.get((w, k), 0) + n
 
     def weap(self, kind):
         w = {"kind": kind, "cooldown": 0.0, "stats": dict(self.cfg["weapons"][kind])}
@@ -299,6 +304,9 @@ class Sim:
         bearing = math.atan2(src[1] - victim.pos[1], src[0] - victim.pos[0]) if src is not None else None
         victim.events.append({"type": "damaged", "amount": round(amount, 2), "weapon": weapon, "bearing": bearing,
                               "by": attacker.id if attacker else None, **({"rear": True} if rear else {})})
+        if attacker is not None and attacker.id == self.ours and weapon in ("gun", "laser", "lightning"):
+            self.stat(weapon, "hits")
+            self.stat(weapon, "dmg", amount)
         if attacker is not None:
             attacker.last_combat = self.t
             attacker.events.append({"type": "hit", "target": victim.id, "amount": round(amount, 2), "weapon": weapon})
@@ -329,6 +337,8 @@ class Sim:
             sp = math.radians(st["spread_deg"])
             y2, p2 = yaw + self.r.gauss(0, sp), pitch + self.r.gauss(0, sp)
             v = st["speed"]
+            if m.id == self.ours:
+                self.stat("gun", "shots")
             self.projectiles.append({"by": m.id, "pos": org, "vel": [v * math.cos(p2) * math.cos(y2), v * math.cos(p2) * math.sin(y2), v * math.sin(p2)],
                                      "dmg": st["damage"], "left": st["range"]})
             w["cooldown"] = st["cooldown"]
@@ -342,6 +352,8 @@ class Sim:
             m.energy -= st["energy"]
             m.energy_t = self.t
             w["cooldown"] = st["cooldown"]
+            if m.id == self.ours:
+                self.stat("lightning", "shots")
             best = None
             for o in self.mechs:
                 if o is m or not o.alive:
@@ -382,6 +394,8 @@ class Sim:
             if math.hypot(px - c[0], py - c[1]) < 2.5 and abs(pz - c[2]) < 4.5:
                 if self.A.los(org, (px, py, pz)) and (best is None or along < best[0]):
                     best = (along, o)
+        if m.id == self.ours:
+            self.stat("laser", "shots")
         if best:
             dmg = st["damage"] * (st["min_frac"] + (1 - st["min_frac"]) * frac)
             self.damage(best[1], dmg, m, "laser", m.pos)
@@ -587,9 +601,13 @@ class Sim:
                         self.house(m)
                 obs = self.observe(us)
                 t0 = time.perf_counter()
-                a = self.bot.act(obs)
+                try:
+                    a = self.bot.act(obs)
+                except Exception:
+                    self.failures += 1
+                    a = None
                 self.times.append(time.perf_counter() - t0)
-                json.dumps(a)
+                json.dumps(a) if a is not None else None
                 self.apply(us, a, True)
             for m in alive:
                 self.physics(m)
@@ -626,22 +644,60 @@ class Sim:
 ARENA_CACHE = {}
 
 
+def load_bot(path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("botmod_" + str(abs(hash(path))), path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.Bot
+
+
+def one(args):
+    kit, seed, botpath, loadout = args
+    s = Sim(kit, seed, load_bot(botpath))
+    if loadout:
+        s.mechs[s.ours].weapons[1] = s.weap(loadout)
+    place, kills, t = s.run()
+    return {"seed": seed, "place": place, "kills": kills, "t": t, "times": s.times, "stats": s.stats, "failures": s.failures}
+
+
+def run_batch(kit, botpath, seeds, loadout=None, procs=4):
+    from multiprocessing import Pool
+    with Pool(procs) as pool:
+        return pool.map(one, [(kit, sd, botpath, loadout) for sd in seeds])
+
+
+def summarize(name, res):
+    allt = sorted(x for r in res for x in r["times"])
+    n = len(res)
+    st = {}
+    for r in res:
+        for k, v in r["stats"].items():
+            st[k] = st.get(k, 0) + v
+    acc = []
+    for w in ("gun", "laser", "lightning"):
+        sh = st.get((w, "shots"), 0)
+        if sh:
+            acc.append(f"{w} {st.get((w, 'hits'), 0)}/{sh} hit ({100 * st.get((w, 'hits'), 0) / sh:.0f}%), {st.get((w, 'dmg'), 0) / n:.0f} dmg/match")
+    return (f"{name}: score {sum(16 - r['place'] for r in res) / n:.2f}  mean place {sum(r['place'] for r in res) / n:.2f}  "
+            f"kills/match {sum(r['kills'] for r in res) / n:.2f}  survived {sum(r['t'] for r in res) / n:.0f}s  "
+            f"failures {sum(r['failures'] for r in res)}  act ms p99 {allt[int(len(allt) * 0.99)] * 1000:.1f} max {allt[-1] * 1000:.1f}\n    " + "; ".join(acc))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--kit", default="/tmp/claude-0/kitx/mechfight-kit")
-    ap.add_argument("--matches", type=int, default=6)
+    ap.add_argument("--matches", type=int, default=24)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--bot", action="append", help="bot.py file(s) to compare on the same seeds")
+    ap.add_argument("--loadout", default=None, help="give our mech this second weapon at spawn (laser, lightning)")
+    ap.add_argument("--procs", type=int, default=4)
     a = ap.parse_args()
-    res = []
-    allt = []
-    for k in range(a.matches):
-        s = Sim(a.kit, a.seed + k, B.Bot)
-        place, kills, t = s.run()
-        allt += s.times
-        res.append(16 - place)
-        print(f"match {k}: place {place} kills {kills} died_at {t:.0f}s  hp_left {s.mechs[s.ours].hp:.0f}", flush=True)
-    allt.sort()
-    print(f"mean score {sum(res) / len(res):.2f}  act ms p50 {allt[len(allt) // 2] * 1000:.1f} p99 {allt[int(len(allt) * 0.99)] * 1000:.1f} max {allt[-1] * 1000:.1f}")
+    bots = a.bot or [os.path.join(os.path.dirname(HERE), "bot.py")]
+    seeds = list(range(a.seed, a.seed + a.matches))
+    for b in bots:
+        res = run_batch(a.kit, os.path.abspath(b), seeds, a.loadout, a.procs)
+        print(summarize(os.path.basename(b), res), flush=True)
 
 
 if __name__ == "__main__":

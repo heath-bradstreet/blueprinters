@@ -350,6 +350,16 @@ class Bot:
         pitch = math.atan2(pz - oz, hd)
         return yaw, pitch, hd, (px, py, pz)
 
+    def hitscan_aim(self, me, tgt_pos, tgt_vel, dt):
+        """Aim [yaw, pitch] for an instant weapon: the target's center `dt` seconds from now."""
+        p = me["pos"]
+        ox, oy, oz = p[0], p[1], p[2] + me["stats"].get("muzzle_height", 7.0)
+        tx = tgt_pos[0] + tgt_vel[0] * dt
+        ty = tgt_pos[1] + tgt_vel[1] * dt
+        tz = tgt_pos[2] + 4.5 + (tgt_vel[2] * dt if abs(tgt_vel[2]) < 15 else 0.0)
+        hd = math.hypot(tx - ox, ty - oy)
+        return math.atan2(ty - oy, tx - ox), math.atan2(tz - oz, hd), hd, (tx, ty, tz)
+
     def mortar_aim(self, me, tgt, tvel):
         p = me["pos"]
         v = self.wstat("mortar", "speed", 72.0)
@@ -685,13 +695,23 @@ class Bot:
                 if w and w["kind"] == "gun":
                     gun, gun_i = w, i
             speed = gun["stats"].get("speed", 252.0) if gun else 252.0
+            # gun: lead by bullet flight time
             yaw, pitch, hd, aimpt = self.lead(me, tp, tv, speed)
-            aimv = [yaw, pitch]
-            yaw_err = abs(wrap(cur[0] - yaw))
-            pitch_err = abs(cur[1] - pitch)
-            ang_err = math.hypot(yaw_err, pitch_err)
+            ang_err = math.hypot(abs(wrap(cur[0] - yaw)), abs(cur[1] - pitch))
+            # laser: hitscan, so aim at where the target is when the beam fires (one decision ahead, ~0.05 s)
+            lyaw, lpitch, lhd, _ = self.hitscan_aim(me, tp, tv, 0.05)
+            l_err = math.hypot(abs(wrap(cur[0] - lyaw)), abs(cur[1] - lpitch))
+            laser = None
+            for w in me["weapons"]:
+                if w and w["kind"] == "laser":
+                    laser = w
+            laser_first = (laser is not None and tgt.get("kind") in ("mech", "npc")
+                           and dist < laser["stats"].get("range", 280) - 10
+                           and (laser.get("charge", 0) > 0 or laser.get("cooldown", 0) < 0.4))
+            aimv = [lyaw, lpitch] if laser_first else [yaw, pitch]
             radius = 2.5 if tgt.get("kind") == "mech" else (1.8 if tgt.get("kind") == "npc" else 1.4)
             tol = max(0.006, (radius * 0.7) / max(1.0, hd))
+            ltol = max(0.005, (radius * 0.6) / max(1.0, lhd))
             center = (tp[0], tp[1], tp[2] + (4.5 if tgt.get("kind") == "mech" else 1.5))
             clear = A.los(muzzle, center) or A.los(muzzle, (tp[0], tp[1], tp[2] + 8.0))
             for i, w in enumerate(me["weapons"]):
@@ -718,12 +738,13 @@ class Bot:
                     if tgt.get("kind") != "mech" and tgt.get("kind") != "npc":
                         continue  # don't waste the laser on crates
                     if ch > 0:
-                        # charging: keep holding until full; release when on target (or about to auto-fire)
-                        if ch < full or (not (clear and ang_err < tol) and ch < full + 1.6):
+                        # charging: keep holding until full; release when the hitscan aim is on target
+                        # (or just before the hold limit, when it would fire on its own anyway)
+                        if ch < full or (not (clear and l_err < ltol) and ch < full + 1.6):
                             fire[i] = True
                         else:
                             fire[i] = False
-                    elif w.get("cooldown", 0) <= 0.05 and dist < rng_ - 10 and clear and ang_err < 0.25:
+                    elif w.get("cooldown", 0) <= 0.05 and dist < rng_ - 10 and clear and l_err < 0.25:
                         fire[i] = True
                 elif k == "mortar":
                     if tgt.get("kind") != "mech":
