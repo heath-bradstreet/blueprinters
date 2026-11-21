@@ -104,6 +104,8 @@ class Bot:
         self.bad_pickups = {}
         self.wander_goal = None
         self.cover_spot = None
+        self.peek_spot = None
+        self.peek_t = -99.0
         self.known_pickups = {}  # id -> (kind, pos, seen_t)
         self.known_crates = {}  # id -> (pos, seen_t)
         self.known_cubes = {}  # id -> (pos, seen_t)
@@ -230,12 +232,14 @@ class Bot:
             return True
         return False
 
-    def find_cover(self, obs, me, threats_xyz, t, radius=70.0):
+    def find_cover(self, obs, me, threats_xyz, t, radius=70.0, short=False):
         """A nearby walkable spot (inside the zone) that none of `threats_xyz` can see. Cached ~1.5 s."""
         A = self.arena
         if not A.ok:
             return None
         p = me["pos"]
+        if short:
+            return self.find_short_cover(obs, me, threats_xyz, t, radius)
         if self.cover_spot is not None and (t - self.cover_t < 1.5 or self.spent() > 0.010):
             return self.cover_spot
         if self.spent() > 0.015:
@@ -276,6 +280,35 @@ class Bot:
             return None
         self.cover_spot = best[1]
         return best[1]
+
+    def find_short_cover(self, obs, me, threats_xyz, t, radius):
+        """Closest spot within a short dash that the given threats can't see. Cached 0.4 s."""
+        A = self.arena
+        p = me["pos"]
+        if self.peek_spot is not None and t - self.peek_t < 0.4:
+            return self.peek_spot
+        if self.spent() > 0.015:
+            return self.peek_spot
+        self.peek_t = t
+        best = None
+        for r in (6.0, 11.0, 16.0, radius):
+            for k in range(12):
+                a = TAU * k / 12
+                x, y = p[0] + r * math.cos(a), p[1] + r * math.sin(a)
+                c = A.ncell(x, y)
+                if c < 0 or A.nblocked[c] or not A.walk_clear(p, (x, y)):
+                    continue
+                if not self.in_current(obs, (x, y), 5.0):
+                    continue
+                gz = A.ground(x, y)
+                if any(A.los((q[0], q[1], q[2] + 8.0), (x, y, gz + 4.5)) or A.los((q[0], q[1], q[2] + 8.0), (x, y, gz + 8.5)) for q in threats_xyz):
+                    continue
+                best = (x, y)
+                break
+            if best is not None:
+                break
+        self.peek_spot = best
+        return best
 
     # ------------------------------------------------------------------ perception
     def remember_items(self, obs, me):
@@ -565,9 +598,17 @@ class Bot:
                 reserve = 35 if "lightning" in kinds else 20
                 boost = energy > reserve and (recent_dmg > 0 or dist < 160)
                 # dodge an aimed laser: if they charge at us, break the line sideways hard
-                if target.get("charging"):
+                charging = [m for dd, m in threats if m.get("charging") and dd < 290]
+                if charging:
+                    # an enemy laser is charging: get out of its line of sight if cover is a short dash away
+                    cov = self.find_cover(obs, me, [m["pos"] for m in charging], t, radius=22.0, short=True)
+                    if cov is not None:
+                        cv = self.steer(me, cov, t)
+                        move = cv
+                        mode = "peek"
+                    else:
+                        move = (px_ * 1.0, py_ * 1.0)
                     boost = energy > 5
-                    move = (px_ * 1.0, py_ * 1.0)
         else:
             # no one in sight
             goal = None

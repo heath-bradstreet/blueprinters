@@ -565,6 +565,13 @@ class Sim:
                     best = (dd, o)
             if best:
                 self.damage(best[1], st["damage"], m, "lightning", m.pos)
+                v = best[1]
+                if any(x and x["kind"] == "laser" for x in v.weapons):
+                    v.charge_start = None
+                    v.short_until = self.t + st.get("short_s", 2.0)
+                    for x in v.weapons:
+                        if x and x["kind"] == "laser":
+                            x["charge"] = 0.0
             self.sound(m, "lightning")
         elif k == "laser":
             pass  # handled by charge logic
@@ -747,7 +754,7 @@ class Sim:
             on = slot < len(fire) and fire[slot]
             if w["kind"] == "laser":
                 st = w["stats"]
-                if on and m.charge_start is None and w["cooldown"] <= 0:
+                if on and m.charge_start is None and w["cooldown"] <= 0 and self.t >= getattr(m, "short_until", -1):
                     m.charge_start = self.t
                 if m.charge_start is not None:
                     ch = self.t - m.charge_start
