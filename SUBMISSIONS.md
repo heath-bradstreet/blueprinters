@@ -20,3 +20,9 @@ Best score is entered in the final automatically; we never pick anything else.
 | Fri 11:10 PM | BB-57ED2D98 | 73a8010 | Retreat later when outgunned (hp < 40%) | - | 3.85 (reverted; scorer queue took 30 min) |
 | Fri 11:46 PM | BB-B5FD5E16 | e5ab1a4 | Hold laser fights at 150 m instead of 120 m | - | 3.69 (reverted) |
 | Fri 11:53 PM | BB-79E90D79 | e7f2d83 | Hold laser fights at 100 m instead of 120 m | - | 3.73 (reverted) |
+| Sat 12:12 AM | BB-88053FCD | 616fc50 | Target choice: weigh enemy HP more, take finishable kills | level | 3.71 (reverted) |
+
+Note (Sat 12:20 AM): practice replays the same 48 matches, so identical code repeats exactly
+(ce69674: 3.92 then 3.94) but any change reshuffles every match. In the local sim, changing only
+the bot's RNG seed moves a 48-match score by about +/-0.25, so the differences above (3.42-3.94)
+are mostly that reshuffle, not real effects.
