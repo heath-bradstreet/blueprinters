@@ -76,8 +76,6 @@ class Bot:
     def __init__(self, hello):
         self.cfg = hello["config"]
         self.slot = int(hello.get("slot", 0))
-        self.healing = False
-        self.hold_fire = False
         self.rng = random.Random(int(hello.get("seed", 1)) ^ 0x5EED)
         mp = hello.get("map") or {}
         t0 = time.perf_counter()
@@ -495,23 +493,13 @@ class Bot:
         if threats:
             def score(item):
                 dd, m = item
-                # kill-focused: seconds to kill it, minus how dangerous it is (and stick with a target)
                 hpv = m.get("hp", 1400)
-                ws = m.get("weapons") or []
-                s = dd / 45.0 + hpv / 230.0
-                if hpv <= 360:
-                    s -= 1.5  # one laser shot (or a short burst) finishes it
-                if m.get("charging"):
-                    s -= 1.5  # a charging laser is about to hit someone: hit it first
-                if "laser" in ws:
-                    s -= 0.5
-                if "lightning" in ws and dd < 50:
-                    s -= 0.8
+                s = dd + hpv * 0.06
                 tr = self.tracks.get(m["id"])
                 if tr is not None and t - tr.last_dmg_t < 3.0:
-                    s -= 1.2  # whoever is hurting us
+                    s -= 60  # whoever is hurting us
                 if m["id"] == self.target_id:
-                    s -= 0.7  # stickiness
+                    s -= 25  # stickiness
                 return s
             target = min(threats, key=score)[1]
             self.target_id = target["id"]
@@ -536,22 +524,6 @@ class Bot:
             if (hp_frac < 0.5 and ehp > me["hp"] * 1.3) or (n_threats >= 3 and hp_frac < 0.6) or \
                (n_threats >= 2 and hp_frac < 0.4) or (hp_frac < 0.22 and ehp > 200):
                 retreat = True
-                self.healing = True
-        # heal lock: once we have backed off, stay out until regen has us near full
-        # (regen needs 5 s without dealing or taking damage, so also hold fire meanwhile)
-        if self.healing and (hp_frac >= 0.9 or (urgency > 0.6 and not self.in_current(obs, p, 0.0))):
-            self.healing = False
-        self.hold_fire = False
-        if self.healing:
-            if target is not None:
-                ehp = target.get("hp", 1400)
-                finishing = ehp <= 300 and d2(p, target["pos"]) < 200
-                if not finishing:
-                    retreat = True
-                    # shooting back is free while they're hitting us; otherwise keep quiet to let regen start
-                    self.hold_fire = t - self.last_damage_t > 1.5
-            else:
-                self.hold_fire = True
 
         if target is not None:
             tp = target["pos"]
@@ -947,10 +919,6 @@ class Bot:
                     fire[i] = True  # an enemy was just here: charge now so we can fire as soon as it reappears
         if aimv is not None:
             act["aim"] = [round(aimv[0], 4), round(max(-0.69, min(1.29, aimv[1])), 4)]
-        if self.hold_fire:
-            # healing: don't reset the regen timer (keep holding a laser charge so it isn't wasted)
-            fire = [bool(f and w is not None and w["kind"] == "laser" and w.get("charge", 0) > 0 and False)
-                    for f, w in zip(fire, me["weapons"])]
         act["fire"] = fire
 
     def alt_target(self, obs, me):
@@ -958,7 +926,7 @@ class Bot:
         p = me["pos"]
         hp_frac = me["hp"] / max(1.0, me["max_hp"])
         best = None
-        if hp_frac > 0.9:
+        if hp_frac > 0.6:
             for m in obs["mechs"]:
                 if m.get("kind") != "npc":
                     continue
