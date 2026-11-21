@@ -26,3 +26,4 @@ Note (Sat 12:20 AM): practice replays the same 48 matches, so identical code rep
 (ce69674: 3.92 then 3.94) but any change reshuffles every match. In the local sim, changing only
 the bot's RNG seed moves a 48-match score by about +/-0.25, so the differences above (3.42-3.94)
 are mostly that reshuffle, not real effects.
+| Sat 12:36 AM | BB-EAD76374 | 3602aa6 | Re-roll 1: best build with only the RNG seed changed | - | 3.94 (identical score; re-rolls stopped, cutoff is now 4.54) |
