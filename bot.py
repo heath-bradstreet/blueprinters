@@ -104,22 +104,6 @@ class Bot:
         self.target_id = None
         self.bad_pickups = {}
         self.wander_goal = None
-        # high ground: the stadium stands (the top showdown bot camps there and wins)
-        self.perches = []
-        try:
-            if self.arena.ok:
-                A = self.arena
-                cx, cy = -276.31, 128.71
-                for r in range(74, 108, 4):
-                    for k in range(72):
-                        a = TAU * k / 72
-                        x, y = cx + r * math.cos(a), cy + r * math.sin(a)
-                        g = A.ground(x, y)
-                        c = A.ncell(x, y)
-                        if 22.0 < g < 37.0 and c >= 0 and not A.nblocked[c]:
-                            self.perches.append((x, y, g))
-        except Exception as ex:
-            log("perch init failed", repr(ex))
         self.cover_spot = None
         self.peek_spot = None
         self.peek_t = -99.0
@@ -526,6 +510,14 @@ class Bot:
         else:
             self.target_id = None
 
+        # patience (showdown leader pattern): in the opening minute don't reveal ourselves by
+        # engaging distant mechs; only fight what is close or is already hurting us
+        if target is not None and t < 60.0:
+            hurt = sum(a for (tt, a, b) in self.damage_log if t - tt < 6.0)
+            if hurt <= 0 and threats[0][0] > 120:
+                target = None
+                self.target_id = None
+
         n_threats = sum(1 for dd, m in threats if dd < 200)
         recent_dmg = sum(a for (tt, a, b) in self.damage_log if t - tt < 4.0)
 
@@ -670,18 +662,12 @@ class Bot:
                     if cov is not None:
                         goal = cov
                         mode = "heal"
-            if goal is None and self.perches:
-                pg = self.perch_goal(obs, me)
-                if pg is not None:
-                    goal, mode = pg, "perch"
-                    if d2(p, pg) < 4.0:
-                        goal = None  # on the perch: hold still and let them come up to us
-            if goal is None and mode != "perch":
+            if goal is None:
                 goal, mode = self.loot_goal(obs, me, kinds, hp_frac)
-            if goal is None and zone_goal is not None and mode != "perch":
+            if goal is None and zone_goal is not None:
                 goal = zone_goal
                 mode = "zone"
-            if goal is None and mode != "perch":
+            if goal is None:
                 # hold a spot inside the next circle; drift toward its centre-ish when far away
                 z = obs["zone"]
                 nc, nr = z["next_center"], z["next_radius"]
@@ -729,21 +715,6 @@ class Bot:
         return act
 
     # ------------------------------------------------------------------ loot
-    def perch_goal(self, obs, me):
-        """Nearest stadium-stand spot that stays inside the zone; None if the zone has left the stadium."""
-        p = me["pos"]
-        best = None
-        for (x, y, g) in self.perches:
-            if not self.inside_future(obs, (x, y), 15.0) or not self.in_current(obs, (x, y), 10.0):
-                continue
-            dd = d2(p, (x, y))
-            if dd > 650:
-                continue
-            sc = dd - 3.0 * g
-            if best is None or sc < best[0]:
-                best = (sc, (x, y))
-        return None if best is None else best[1]
-
     def loot_goal(self, obs, me, kinds, hp_frac):
         p = me["pos"]
         t = obs["t"]
