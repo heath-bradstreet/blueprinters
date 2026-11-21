@@ -26,7 +26,7 @@ TAU = 2 * math.pi
 
 # preferred second weapons, best first
 # no mortar: carrying one makes enemy lasers hit us 60% harder (cook-off), and we rarely land shells
-WEAPON_RANK = {"laser": 3, "lightning": 2, "mortar": -5, "gun": 0}
+WEAPON_RANK = {"laser": 2, "lightning": 3, "mortar": -5, "gun": 0}
 UPGRADE_RANK = [
     "armor", "plating", "nanites", "laser_damage", "laser_charge", "gun_rate", "gun_damage",
     "lightning_efficiency", "lightning_range", "gun_mag", "gun_velocity", "servos", "capacitor",
@@ -525,7 +525,8 @@ class Bot:
         if target is not None:
             # outgunned: low HP vs healthier enemy, or several enemies on us
             ehp = target.get("hp", 1400)
-            if (hp_frac < 0.15 and ehp > me["hp"] * 1.5) or (n_threats >= 3 and hp_frac < 0.25):
+            if (hp_frac < 0.5 and ehp > me["hp"] * 1.3) or (n_threats >= 3 and hp_frac < 0.6) or \
+               (n_threats >= 2 and hp_frac < 0.4) or (hp_frac < 0.22 and ehp > 200):
                 retreat = True
 
         dgoal = self.drop_goal(obs, me)
@@ -540,8 +541,6 @@ class Bot:
                 want = 120.0
             else:
                 want = 90.0
-            if target.get("hp", 1400) < 450 and hp_frac > 0.35:
-                want = min(want, 55.0)  # finish it before it regens
             tw = target.get("weapons") or []
             if "lightning" in tw and "lightning" not in kinds:
                 want = max(want, 70.0)  # stay out of their arc
