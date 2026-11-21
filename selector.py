@@ -291,6 +291,11 @@ class Selector:
             return set(self.all_tests), True
         return self._xlate(hit), False
 
+    def _is_dialect(self, path: str) -> bool:
+        """Is `path` one of the five files implementing a dialect?"""
+        parts = path.split("/")
+        return len(parts) == 3 and parts[0] == "sqlglot" and parts[1] in DIALECT_DIRS
+
     def _symref_tests(self, path: str, modlines: set[int]):
         """Tests that execute a line REFERENCING what the changed line binds.
 
@@ -434,14 +439,21 @@ class Selector:
                 # docs/SOUNDNESS.md records one sample commit (rszg) where that
                 # arbitrary attribution happened to be load-bearing.
                 cov_lines = lines - modlines
+            strong_here = False
             if cov_lines:
                 hit = self._xlate(self.cov.tests_for_lines(path, cov_lines))
                 sel |= hit
                 strong |= hit
+                strong_here = bool(hit)
 
             # 4. module-level changes need a backstop
             if modlines:
-                fam = self._dialect_family(path)
+                # _dialect_family unions in the dialect's own test file, so it
+                # is non-empty for ANY sqlglot/<dir>/<stem>.py whose stem
+                # happens to name a dialect test file. Require that it actually
+                # be a dialect module, or __main__.py-shaped files take this
+                # branch and never reach the widen below.
+                fam = self._dialect_family(path) if self._is_dialect(path) else set()
                 if fam:
                     sel |= fam
                 else:
@@ -452,6 +464,22 @@ class Selector:
                         widened = widened or fm_widened
                     else:
                         sel |= got
+                        if not got and not strong_here:
+                            # symref answered, but with nothing, and no rung
+                            # claimed a test either. No evidence at all.
+                            widened = True
+                            sel |= set(self.all_tests)
+            elif self._filemap_tests(path)[1]:
+                # No module-level lines, no line coverage, AND the file has no
+                # per-test-file coverage row either: no test has ever been
+                # observed executing this file. sqlglot/__main__.py is the
+                # standing example -- present in the coverage map but imported
+                # by nothing. Selecting a handful of ride-along tests there is
+                # a 300 s bet on code we have zero evidence about, so widen.
+                # A comment-only edit does NOT come here: such a file still has
+                # a filemap row, and a comment line is not code in either map.
+                widened = True
+                sel |= set(self.all_tests)
 
         # Trim expensive tests that only the backstop justified. Skipped
         # entirely if any path widened, because then we have no evidence to
