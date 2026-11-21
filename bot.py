@@ -28,8 +28,8 @@ TAU = 2 * math.pi
 # no mortar: carrying one makes enemy lasers hit us 60% harder (cook-off), and we rarely land shells
 WEAPON_RANK = {"laser": 3, "lightning": 2, "mortar": -5, "gun": 0}
 UPGRADE_RANK = [
-    "plating", "armor", "nanites", "servos", "laser_charge", "laser_damage", "gun_damage", "gun_rate",
-    "lightning_efficiency", "lightning_range", "gun_mag", "gun_velocity", "capacitor",
+    "armor", "plating", "nanites", "laser_damage", "laser_charge", "gun_rate", "gun_damage",
+    "lightning_efficiency", "lightning_range", "gun_mag", "gun_velocity", "servos", "capacitor",
     "reactor", "jets", "gyros", "lightning_chain", "mortar_reload", "mortar_velocity",
     "mortar_splash", "laser_pierce", "sensors",
 ]
@@ -534,7 +534,7 @@ class Bot:
             if "lightning" in kinds and energy > 15:
                 want = 28.0
             elif "laser" in kinds:
-                want = 140.0
+                want = 120.0
             else:
                 want = 90.0
             tw = target.get("weapons") or []
@@ -658,15 +658,6 @@ class Bot:
             if goal is None or (hp_frac < 0.7 and urgency < 0.5 and mode != "zone"):
                 if goal is None:
                     move = (0.0, 0.0)
-            if goal is None:
-                if self.wander_goal is None or d2(p, self.wander_goal) < 12 or not self.in_current(obs, self.wander_goal, 20.0):
-                    z = obs["zone"]
-                    nc, nr = z["next_center"], z["next_radius"]
-                    a = self.rng.uniform(0, TAU)
-                    r = nr * 0.6 * math.sqrt(self.rng.random())
-                    self.wander_goal = (nc[0] + r * math.cos(a), nc[1] + r * math.sin(a))
-                move = self.steer(me, self.wander_goal, t)
-                mode = "patrol"
 
         # unstick
         want_move = math.hypot(*move) > 0.3
@@ -726,7 +717,7 @@ class Bot:
                 best = (s, (pos[0], pos[1]), "loot")
         for cid, (pos, seen) in self.known_cubes.items():
             dd = d2(p, pos)
-            if dd > 200 or abs(pos[2] - p[2]) > 6 or not self.in_current(obs, pos, 8):
+            if dd > 140 or abs(pos[2] - p[2]) > 6 or not self.in_current(obs, pos, 8):
                 continue
             s = dd - 20
             if best is None or s < best[0]:
@@ -735,7 +726,7 @@ class Bot:
         if hp_frac > 0.5:
             for cid, (pos, seen) in self.known_crates.items():
                 dd = d2(p, pos)
-                if dd > 280 or abs(pos[2] - p[2]) > 6 or not self.in_current(obs, pos, 10):
+                if dd > 200 or abs(pos[2] - p[2]) > 6 or not self.in_current(obs, pos, 10):
                     continue
                 if dd < 35:
                     continue  # close enough to shoot it (alt_target does that)
