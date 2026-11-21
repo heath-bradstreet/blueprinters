@@ -538,9 +538,9 @@ class Bot:
             if "lightning" in kinds and energy > 15:
                 want = 28.0
             elif "laser" in kinds:
-                want = 120.0
+                want = 210.0
             else:
-                want = 90.0
+                want = 150.0
             tw = target.get("weapons") or []
             if "lightning" in tw and "lightning" not in kinds:
                 want = max(want, 70.0)  # stay out of their arc
@@ -719,11 +719,8 @@ class Bot:
             if kind in kinds:
                 continue
             r = WEAPON_RANK.get(kind, 0)
-            pair = kinds[0] == "gun" and kinds[1] in ("laser", "lightning") and kind in ("laser", "lightning")
-            if r <= cur_rank and not pair:
+            if r <= cur_rank:
                 continue
-            if pair:
-                r = 3
             dd = d2(p, pos)
             reach = 260 if cur_rank < 0 else 160
             if dd > reach or abs(pos[2] - p[2]) > 6:
@@ -865,20 +862,11 @@ class Bot:
                 continue
             if best is None or r > best[0]:
                 best = (r, pk)
-        w1 = me["weapons"][1] if len(me["weapons"]) > 1 else None
-        w0 = me["weapons"][0]
-        # laser + lightning, no gun: swap the gun out for the weapon we lack
-        if w0 is not None and w0["kind"] == "gun" and w1 is not None and w1["kind"] in ("laser", "lightning"):
-            want = "lightning" if w1["kind"] == "laser" else "laser"
-            for pk in obs["pickups"]:
-                if pk["kind"] == want and d2(p, pk["pos"]) <= reach - 0.3 and abs(pk["pos"][2] - p[2]) <= 3.8 \
-                        and t - self.bad_pickups.get(pk["id"], -99) >= 3 and (target is None or d2(p, target["pos"]) > 60):
-                    act["take"] = pk["id"]
-                    act["drop"] = 0
-                    return
         if best is None:
             return
         r, pk = best
+        w1 = me["weapons"][1] if len(me["weapons"]) > 1 else None
+        w0 = me["weapons"][0]
         if w0 is None:
             act["take"] = pk["id"]
             return
