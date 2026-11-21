@@ -49,12 +49,16 @@ COPY maps/crossdialect.json /app/maps/crossdialect.json
 #                    test transpiles BETWEEN dialects, so test_duckdb depends on
 #                    starrocks; resolved at runtime, invisible to coverage.
 COPY maps/dialectrefs.json /app/maps/dialectrefs.json
+# sigmap.json  function-signature line ranges -> that function's body range, so
+#              a changed default argument is answered by the function's own
+#              coverage rather than by the weak module-level backstop
+COPY maps/sigmap.json /app/maps/sigmap.json
 
 RUN chmod 0444 /app/selector.py /app/brmap.py /app/auxmap.py /app/symref.py \
                /app/maps/cov.brdm /app/maps/aux.brs \
                /app/maps/symref.json.gz /app/maps/testids.txt \
                /app/maps/dialect_tree.json /app/maps/crossdialect.json \
-               /app/maps/dialectrefs.json
+               /app/maps/dialectrefs.json /app/maps/sigmap.json
 
 # Run unprivileged. The scorer also passes --user 65534:65534; setting it here
 # means the image is correct on its own and never depends on root.

@@ -265,6 +265,17 @@ class Selector:
             self.dialect_refs = acc
         except Exception as exc:  # noqa: BLE001
             print(f"dialectrefs.json unavailable ({exc!r})", file=sys.stderr)
+        # Function-signature line ranges -> that function's body range. A
+        # changed default argument is lexically module level (it runs at `def`
+        # time) but its value is consumed on every call, so the right question
+        # is which tests executed the FUNCTION. See tools/build_sigmap.py.
+        self.sigmap: dict[str, list] = {}
+        try:
+            with open(os.path.join(MAPS, "sigmap.json"), "rb") as fh:
+                self.sigmap = json.loads(fh.read())
+        except Exception as exc:  # noqa: BLE001
+            print(f"sigmap.json unavailable ({exc!r})", file=sys.stderr)
+
         # Rung 0. Tests no coverage row mentions, so no rule can ever pick them,
         # plus any test the maps have never heard of at all.
         self.ride_along: set[int] = set(extra)
@@ -324,8 +335,39 @@ class Selector:
         if not base.endswith(".py"):
             return set()
         stem = base[:-3]
-        if stem == "__init__" or self.cov is None:
+        if self.cov is None:
             return set()
+        if stem == "__init__":
+            # sqlglot/dialects/__init__.py is the lazy loader: its
+            # `__getattr__` imports dialect modules on demand, so every dialect
+            # resolves through it and a change here can break any of them.
+            # Measured on a verified corpus case: it missed test_enum,
+            # test_generator_memory and test_unsupported_slice. Return the
+            # union over all dialects, bounded by the break-even rule.
+            out: set[int] = set()
+            for name in self.dialect_refs:
+                out |= {
+                    n for n in self.dialect_refs[name]
+                    if self.dur.get(n, 0) < EXPENSIVE_MS
+                }
+            # The cross-dialect tests go in WITHOUT the cost bound here, unlike
+            # everywhere else. The bound exists because a generic dialect edit
+            # is unlikely to break a specific expensive test (test_generator_memory
+            # at 6.7 s needs a 2.2% failure rate to pay, and a dialect edit
+            # gives 0.6%). But this file is not a dialect -- it is the resolver
+            # every dialect loads through, and the cross-dialect tests
+            # enumerate all dialects at run time, so a change here reaches them
+            # almost by construction. Measured: this case breaks
+            # test_generator_memory. Only 6 tests are involved and only one is
+            # expensive, so the exposure is 6.7 s on the rare commit that
+            # touches the loader.
+            out |= set(self.crossdialect)
+            for f in GENERIC_TEST_FILES:
+                out |= {
+                    n for n in self.tests_by_file.get(f, ())
+                    if self.dur.get(n, 0) < EXPENSIVE_MS
+                }
+            return out
         out: set[int] = set()
         for d in DIALECT_DIRS:
             out |= self.cov.tests_for_file("sqlglot/%s/%s.py" % (d, stem))
@@ -559,6 +601,22 @@ class Selector:
                 # arbitrary attribution happened to be load-bearing.
                 cov_lines = lines - modlines
             strong_here = False
+            # A changed signature/decorator line: ask coverage about the
+            # function's BODY, which is what the default value actually
+            # affects, and treat the answer as strong. Without this the line
+            # looks module level, the backstop answers weakly, and the
+            # expensive-test trim drops real failures -- measured on
+            # optimizer/qualify.py's `expand_stars` default, which breaks the
+            # 21.45 s TPC-DS executor test.
+            for sig_start, sig_end, body_start, body_end in self.sigmap.get(path, ()):
+                if any(sig_start <= ln <= sig_end for ln in lines):
+                    hit = self._xlate(
+                        self.cov.tests_for_lines(path, set(range(body_start, body_end + 1)))
+                    )
+                    if hit:
+                        sel |= hit
+                        strong |= hit
+                        strong_here = True
             if cov_lines:
                 hit = self._xlate(self.cov.tests_for_lines(path, cov_lines))
                 sel |= hit
