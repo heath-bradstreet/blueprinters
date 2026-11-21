@@ -8,15 +8,32 @@ FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf107
 
 # No third-party packages: the selector is pure Python standard library, which
 # keeps interpreter startup -- and therefore our scored CPU seconds -- minimal.
+# The dependency maps are committed as plain binary files rather than built here,
+# so the build stays seconds long instead of running sqlglot's suite on every
+# submission. The track allows either; it explicitly allows maps built from the
+# pinned commit, and committing them keeps every rebuild identical.
 
-# Create /app explicitly as world-traversable, then copy the selector and make
-# it world-readable, so it is readable by the unprivileged runtime user
-# (uid 65534 / nobody) and not only by root. Do not fold the mode into
+# Create the directories explicitly as world-traversable, then copy files in and
+# make them world-readable, so they are readable by the unprivileged runtime
+# user (uid 65534 / nobody) and not only by root. Do not fold the mode into
 # `COPY --chmod`: BuildKit applies that mode to the parent directory it creates
-# too, which leaves /app without the +x needed to traverse into it.
-RUN mkdir -p /app && chmod 0755 /app
+# too, which leaves the directory without the +x needed to traverse into it.
+RUN mkdir -p /app/maps && chmod 0755 /app /app/maps
+
+# The selector and its two map decoders. Both decoders are stdlib-only, mmap
+# the map with ACCESS_READ, and write nothing -- required on a read-only disk.
 COPY selector.py /app/selector.py
-RUN chmod 0444 /app/selector.py
+COPY brmap.py /app/brmap.py
+COPY auxmap.py /app/auxmap.py
+
+# cov.brdm  per-test LINE coverage, corrected for sqlglot's spawned subprocesses
+# aux.brs   fixture reads, per-test-file coverage, module-level line ranges,
+#           and the tests no coverage row mentions at all
+COPY maps/cov.brdm /app/maps/cov.brdm
+COPY maps/aux.brs /app/maps/aux.brs
+
+RUN chmod 0444 /app/selector.py /app/brmap.py /app/auxmap.py \
+               /app/maps/cov.brdm /app/maps/aux.brs
 
 # Run unprivileged. The scorer also passes --user 65534:65534; setting it here
 # means the image is correct on its own and never depends on root.
