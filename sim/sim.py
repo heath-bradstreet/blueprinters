@@ -120,6 +120,19 @@ class Sim:
             self.crates[1000 + k] = {"id": 1000 + k, "pos": [p[0], p[1], self.A.ground(*p)], "hp": float(self.cfg["crates"]["hp"])}
         self.cubes = {}
         self.cid = 5000
+        nc = self.cfg["npc"]
+        self.npcs = {}
+        for k in range(int(nc["count"])):
+            for _ in range(50):
+                p = (self.r.uniform(self.A.minx + 60, self.A.maxx - 60), self.r.uniform(self.A.miny + 60, self.A.maxy - 60))
+                c = self.A.ncell(*p)
+                if c >= 0 and not self.A.nblocked[c]:
+                    break
+            z = self.A.ground(*p)
+            self.npcs[100 + k] = {"id": 100 + k, "pos": [p[0], p[1], z], "home": (p[0], p[1]), "hp": float(nc["hp"]),
+                                  "aggro": None, "cd": 0.0, "wander": (p[0], p[1])}
+        self.drops = {}
+        self.drop_k = 0
         self.offers = []  # pending offers for our mech
         self.offer_id = 0
         self.armor = {}  # mech id -> damage reduction
@@ -241,6 +254,96 @@ class Sim:
             o = self.offers.pop(0)
             self.apply_upgrade(us, o["choices"][0]["id"])
 
+    def npc_hit(self, n, amount, attacker):
+        n["hp"] -= amount
+        n["aggro"] = attacker.id
+        if attacker.id == self.ours:
+            attacker.events.append({"type": "hit", "target": n["id"], "amount": round(amount, 2), "weapon": "gun"})
+        attacker.last_combat = self.t
+        if n["hp"] <= 0:
+            del self.npcs[n["id"]]
+            for _ in range(int(self.cfg["npc"]["cubes"])):
+                self.spawn_cube(n["pos"])
+
+    def npc_step(self):
+        nc = self.cfg["npc"]
+        dt = self.dt
+        us = self.mechs[self.ours]
+        for n in list(self.npcs.values()):
+            n["cd"] = max(0.0, n["cd"] - dt)
+            tgt = None
+            if us.alive:
+                dd = d2(n["pos"], us.pos)
+                los = self.A.los((n["pos"][0], n["pos"][1], n["pos"][2] + 3), (us.pos[0], us.pos[1], us.pos[2] + 4.5))
+                if n["aggro"] == us.id and dd < nc["deaggro_range"] and d2(n["pos"], n["home"]) < nc["chase_leash"]:
+                    tgt = us
+                elif dd < nc["aggro_range"] and los and d2(n["pos"], n["home"]) < nc["leash"]:
+                    tgt = us
+                if tgt is not None and los and n["cd"] <= 0 and dd < 120:
+                    n["cd"] = nc["cooldown"]
+                    # hit chance falls with range and target speed (90 m/s bullets, spread)
+                    sp = math.hypot(us.vel[0], us.vel[1])
+                    pr = max(0.1, 0.9 - dd / 150 - sp * dd / 90 / 8)
+                    if self.r.random() < pr:
+                        self.damage(us, nc["damage"], None, "npc", n["pos"])
+                    self.sound(us, "npc_gun")
+            goal = (tgt.pos[0], tgt.pos[1]) if tgt is not None and d2(n["pos"], tgt.pos) > 15 else None
+            if goal is None:
+                if d2(n["pos"], n["wander"]) < 3:
+                    a = self.r.uniform(0, TAU)
+                    n["wander"] = (n["home"][0] + 25 * math.cos(a), n["home"][1] + 25 * math.sin(a))
+                goal = n["wander"]
+            dx, dy = goal[0] - n["pos"][0], goal[1] - n["pos"][1]
+            dn = math.hypot(dx, dy)
+            if dn > 1:
+                nx_, ny_ = n["pos"][0] + dx / dn * nc["speed"] * dt, n["pos"][1] + dy / dn * nc["speed"] * dt
+                c = self.A.ncell(nx_, ny_)
+                if c >= 0 and not self.A.nblocked[c]:
+                    n["pos"][0], n["pos"][1] = nx_, ny_
+                    n["pos"][2] = self.A.ground(nx_, ny_)
+
+    def drop_step(self):
+        dc = self.cfg.get("drops")
+        if not dc:
+            return
+        times = dc["times"]
+        if self.drop_k < len(times) and self.t >= times[self.drop_k]:
+            for _ in range(50):
+                a = self.r.uniform(0, TAU)
+                rr = math.sqrt(self.r.random()) * self.nr * dc["spread"]
+                p = (self.nc[0] + rr * math.cos(a), self.nc[1] + rr * math.sin(a))
+                c = self.A.ncell(*p)
+                if c >= 0 and not self.A.nblocked[c]:
+                    break
+            did = 20000 + self.drop_k
+            self.drops[did] = {"id": did, "pos": [p[0], p[1], self.A.ground(*p)], "radius": dc["radius"], "lands_in": dc["fall_s"],
+                               "capture_s": dc["capture_s"], "progress": 0.0, "holder": None}
+            self.drop_k += 1
+            for m in self.mechs:
+                if m.alive:
+                    self.sound(self.mechs[0], "drop")
+        for d in list(self.drops.values()):
+            if d["lands_in"] > 0:
+                d["lands_in"] = max(0.0, d["lands_in"] - self.dt)
+                continue
+            inside = [m for m in self.mechs if m.alive and d2(m.pos, d["pos"]) < d["radius"]]
+            if len(inside) == 1:
+                m = inside[0]
+                if d["holder"] != m.id:
+                    d["holder"], d["progress"] = m.id, 0.0
+                d["progress"] += self.dt
+                if d["progress"] >= d["capture_s"]:
+                    del self.drops[d["id"]]
+                    for _ in range(int(dc["cubes"])):
+                        self.give_cube(m)
+                    m.hp = m.max_hp
+                    m.energy = 100.0
+                    m.events.append({"type": "drop", "id": d["id"], "cubes": m.cubes})
+                    if m.id == self.ours:
+                        self.stat("drop", "captured")
+            elif len(inside) == 0:
+                d["holder"], d["progress"] = None, 0.0
+
     def crate_hit(self, crate, amount, attacker):
         crate["hp"] -= amount
         if attacker is not None and attacker.id == self.ours:
@@ -266,6 +369,10 @@ class Sim:
                 mechs.append({"id": o.id, "kind": "mech", "pos": [round(v, 2) for v in o.pos], "vel": [round(v, 2) for v in o.vel],
                               "aim": list(o.aim), "hp": o.hp, "max_hp": o.max_hp, "cubes": o.cubes,
                               "weapons": [w["kind"] for w in o.weapons if w], "charging": o.charge_start is not None})
+        for n in self.npcs.values():
+            if self.sees_pt(me, n["pos"]):
+                mechs.append({"id": n["id"], "kind": "npc", "pos": [round(v, 2) for v in n["pos"]], "vel": [0, 0, 0], "aim": [0, 0],
+                              "hp": n["hp"], "max_hp": self.cfg["npc"]["hp"]})
         projs = [{"id": i, "kind": "gun", "pos": p["pos"], "vel": p["vel"]} for i, p in enumerate(self.projectiles) if p["by"] != me.id and d2(p["pos"], me.pos) < 150]
         pick = [p for p in self.pickups.values() if d2(p["pos"], me.pos) < 120]
         ev, me.events = me.events, []
@@ -286,7 +393,7 @@ class Sim:
                          "hp": me.hp, "max_hp": me.max_hp, "energy": round(me.energy, 1), "max_energy": 100, "grounded": me.grounded,
                          "cubes": me.cubes, "upgrades": [], "weapons": w, "in_zone": in_zone, "stats": st},
                 "mechs": mechs, "projectiles": projs, "crates": [dict(c) for c in self.crates.values() if self.sees_pt(me, c["pos"])], "cubes": [dict(c) for c in self.cubes.values() if self.sees_pt(me, c["pos"])], "pickups": pick, "sounds": snd, "beams": [],
-                "events": ev, "drops": [],
+                "events": ev, "drops": [dict(d) for d in self.drops.values()],
                 "zone": {"center": [round(v, 2) for v in self.zc], "radius": round(self.zr, 2), "next_center": [round(v, 2) for v in self.nc],
                          "next_radius": self.nr, "shrink_start": self.s0, "shrink_end": self.s1, "dps": self.dps},
                 "offer": self.offers[0] if self.offers else None}
@@ -388,6 +495,8 @@ class Sim:
         bearing = math.atan2(src[1] - victim.pos[1], src[0] - victim.pos[0]) if src is not None else None
         victim.events.append({"type": "damaged", "amount": round(amount, 2), "weapon": weapon, "bearing": bearing,
                               "by": attacker.id if attacker else None, **({"rear": True} if rear else {})})
+        if victim.id == self.ours:
+            self.stat("taken", weapon, amount)
         if attacker is not None and attacker.id == self.ours and weapon in ("gun", "laser", "lightning"):
             self.stat(weapon, "hits")
             self.stat(weapon, "dmg", amount)
@@ -484,6 +593,8 @@ class Sim:
             self.stat("laser", "shots")
         if best:
             dmg = st["damage"] * (st["min_frac"] + (1 - st["min_frac"]) * frac)
+            if any(w and w["kind"] == "mortar" for w in best[1].weapons):
+                dmg *= 1 + st.get("cookoff", 0.6)
             self.damage(best[1], dmg, m, "laser", m.pos)
         w["cooldown"] = st["cooldown"]
         w["charge"] = 0.0
@@ -659,6 +770,13 @@ class Sim:
                 if p["left"] <= 0 or self.A.solid_at(pos[0], pos[1], pos[2]):
                     hit = True
                     break
+                for n in list(self.npcs.values()):
+                    if math.hypot(pos[0] - n["pos"][0], pos[1] - n["pos"][1]) < 2.1 and n["pos"][2] - 0.3 < pos[2] < n["pos"][2] + 3.8:
+                        self.npc_hit(n, p["dmg"] * (1 + 0.04 * min(self.mechs[p["by"]].cubes, 10)), self.mechs[p["by"]])
+                        hit = True
+                        break
+                if hit:
+                    break
                 for cr in list(self.crates.values()):
                     if math.hypot(pos[0] - cr["pos"][0], pos[1] - cr["pos"][1]) < 1.7 and cr["pos"][2] - 0.3 < pos[2] < cr["pos"][2] + 2.7:
                         self.crate_hit(cr, p["dmg"] * (1 + 0.04 * min(self.mechs[p["by"]].cubes, 10)), self.mechs[p["by"]])
@@ -728,6 +846,8 @@ class Sim:
                 elif self.t - m.last_combat > cfgm["regen_delay"]:
                     m.hp = min(m.max_hp, m.hp + cfgm["regen_per_s"] * self.dt)
             self.cube_step()
+            self.npc_step()
+            self.drop_step()
             self.zone_step()
             self.t += self.dt
             self.tick += 1
@@ -782,7 +902,7 @@ def summarize(name, res):
             acc.append(f"{w} {st.get((w, 'hits'), 0)}/{sh} hit ({100 * st.get((w, 'hits'), 0) / sh:.0f}%), {st.get((w, 'dmg'), 0) / n:.0f} dmg/match")
     return (f"{name}: score {sum(16 - r['place'] for r in res) / n:.2f}  mean place {sum(r['place'] for r in res) / n:.2f}  "
             f"kills/match {sum(r['kills'] for r in res) / n:.2f}  survived {sum(r['t'] for r in res) / n:.0f}s  "
-            f"failures {sum(r['failures'] for r in res)}  act ms p99 {allt[int(len(allt) * 0.99)] * 1000:.1f} max {allt[-1] * 1000:.1f}\n    " + "; ".join(acc) + f"\n    cubes/match {sum(r['cubes'] for r in res) / n:.1f}  2nd weapon at death: " + str({k: sum(1 for r in res if r['w2'] == k) for k in ('laser', 'lightning', 'mortar', '-')}))
+            f"failures {sum(r['failures'] for r in res)}  act ms p99 {allt[int(len(allt) * 0.99)] * 1000:.1f} max {allt[-1] * 1000:.1f}\n    " + "; ".join(acc) + f"\n    drops captured {st.get(('drop', 'captured'), 0)}  dmg taken/match " + str({w: round(st.get(('taken', w), 0) / n) for w in ('gun', 'laser', 'lightning', 'npc', 'zone')}) + f"\n    cubes/match {sum(r['cubes'] for r in res) / n:.1f}  2nd weapon at death: " + str({k: sum(1 for r in res if r['w2'] == k) for k in ('laser', 'lightning', 'mortar', '-')}))
 
 
 def main():

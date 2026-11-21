@@ -24,7 +24,8 @@ NAME = "blueprinters"
 TAU = 2 * math.pi
 
 # preferred second weapons, best first
-WEAPON_RANK = {"laser": 3, "lightning": 2, "mortar": 1, "gun": 0}
+# no mortar: carrying one makes enemy lasers hit us 60% harder (cook-off), and we rarely land shells
+WEAPON_RANK = {"laser": 3, "lightning": 2, "mortar": -5, "gun": 0}
 UPGRADE_RANK = [
     "armor", "plating", "nanites", "laser_damage", "laser_charge", "gun_rate", "gun_damage",
     "lightning_efficiency", "lightning_range", "gun_mag", "gun_velocity", "servos", "capacitor",
@@ -722,6 +723,8 @@ class Bot:
             if k in kinds:
                 continue
             r = WEAPON_RANK.get(k, 0)
+            if r < 0:
+                continue
             if best is None or r > best[0]:
                 best = (r, pk)
         if best is None:
