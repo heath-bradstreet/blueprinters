@@ -9,6 +9,7 @@ Placement is what scores, so the bot plays for survival first:
 """
 from __future__ import annotations
 
+import gc
 import json
 import math
 import queue
@@ -198,10 +199,10 @@ class Bot:
             return unit(goal[0] - p[0], goal[1] - p[1])
         replan = (self.path is None or self.path_goal is None or d2(self.path_goal, goal) > 12
                   or t - self.path_t > 4.0)
-        if replan and t - self.path_t > 0.5 and self.spent() < 0.006:
+        if replan and t - self.path_t > 0.5 and self.spent() < 0.004:
             self.path_t = t
             self.path_goal = goal
-            self.path = A.astar((p[0], p[1]), goal, max_exp=1500)
+            self.path = A.astar((p[0], p[1]), goal, max_exp=1000)
         if self.path:
             # drop reached waypoints, then head for the furthest one we can walk to straight
             while len(self.path) > 1 and d2(p, self.path[0]) < 4.0:
@@ -240,9 +241,9 @@ class Bot:
         p = me["pos"]
         if short:
             return self.find_short_cover(obs, me, threats_xyz, t, radius)
-        if self.cover_spot is not None and (t - self.cover_t < 1.5 or self.spent() > 0.005):
+        if self.cover_spot is not None and (t - self.cover_t < 1.5 or self.spent() > 0.003):
             return self.cover_spot
-        if self.spent() > 0.008:
+        if self.spent() > 0.005:
             return None
         self.cover_t = t
         best = None
@@ -287,7 +288,7 @@ class Bot:
         p = me["pos"]
         if self.peek_spot is not None and t - self.peek_t < 0.4:
             return self.peek_spot
-        if self.spent() > 0.008:
+        if self.spent() > 0.005:
             return self.peek_spot
         self.peek_t = t
         best = None
@@ -976,6 +977,10 @@ def main():
                     bot = Bot(msg)
                 except Exception:
                     log(traceback.format_exc())
+                # the map is built once: move it out of the GC's way so collections stay short
+                gc.collect()
+                gc.freeze()
+                gc.set_threshold(50000, 50, 100)
                 send({"type": "ready", "name": NAME})
             elif kind == "obs":
                 latest = msg
