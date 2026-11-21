@@ -28,9 +28,9 @@ TAU = 2 * math.pi
 # no mortar: carrying one makes enemy lasers hit us 60% harder (cook-off), and we rarely land shells
 WEAPON_RANK = {"laser": 3, "lightning": 2, "mortar": -5, "gun": 0}
 UPGRADE_RANK = [
-    "armor", "plating", "nanites", "laser_damage", "laser_charge", "gun_rate", "gun_damage",
-    "lightning_efficiency", "lightning_range", "gun_mag", "gun_velocity", "servos", "capacitor",
-    "reactor", "jets", "gyros", "lightning_chain", "mortar_reload", "mortar_velocity",
+    "servos", "reactor", "capacitor", "armor", "plating", "nanites", "laser_damage", "laser_charge", "gun_rate", "gun_damage",
+    "lightning_efficiency", "lightning_range", "gun_mag", "gun_velocity",
+    "jets", "gyros", "lightning_chain", "mortar_reload", "mortar_velocity",
     "mortar_splash", "laser_pierce", "sensors",
 ]
 
@@ -538,9 +538,9 @@ class Bot:
             if "lightning" in kinds and energy > 15:
                 want = 28.0
             elif "laser" in kinds:
-                want = 210.0
+                want = 120.0
             else:
-                want = 150.0
+                want = 90.0
             tw = target.get("weapons") or []
             if "lightning" in tw and "lightning" not in kinds:
                 want = max(want, 70.0)  # stay out of their arc
@@ -621,7 +621,7 @@ class Bot:
                         mode = "ring"
                 # boost-strafe when under fire and we can afford it (keep energy for lightning)
                 reserve = 35 if "lightning" in kinds else 20
-                boost = energy > reserve and (recent_dmg > 0 or dist < 160)
+                boost = energy > reserve - 12  # always boost-strafe in fights
                 # dodge an aimed laser: if they charge at us, break the line sideways hard
                 charging = [m for dd, m in threats if m.get("charging") and dd < 290]
                 if in_ring:
