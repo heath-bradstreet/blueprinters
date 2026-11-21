@@ -28,3 +28,4 @@ the bot's RNG seed moves a 48-match score by about +/-0.25, so the differences a
 are mostly that reshuffle, not real effects.
 | Sat 12:36 AM | BB-EAD76374 | 3602aa6 | Re-roll 1: best build with only the RNG seed changed | - | 3.94 (identical score; re-rolls stopped, cutoff is now 4.54) |
 | Sat 12:55 AM | BB-A6784835 | c853500 | Heal lock: stay out and hold fire until 90% HP | level | 3.54 (reverted) |
+| Sat 1:03 AM | BB-282BA7DC | 7e06233 | Laser pre-charge behind cover (on best build) | level | 3.75 (reverted) |

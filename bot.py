@@ -863,9 +863,8 @@ class Bot:
                             fire[i] = True
                         else:
                             fire[i] = False
-                    elif w.get("cooldown", 0) <= 0.05 and dist < rng_ - 10 and l_err < 0.25 and \
-                            (clear or tgt.get("kind") == "mech"):
-                        fire[i] = True  # pre-charge behind cover too: release the moment the line opens
+                    elif w.get("cooldown", 0) <= 0.05 and dist < rng_ - 10 and clear and l_err < 0.25:
+                        fire[i] = True
                 elif k == "mortar":
                     if tgt.get("kind") != "mech":
                         continue
@@ -905,18 +904,11 @@ class Bot:
             else:
                 self.scan_yaw = look
             aimv = [look, 0.0]
-            pre = None
-            rec = [tr for tr in self.tracks.values() if t - tr.seen_t < 3.0 and d2(p, tr.pos) < 250]
-            if rec:
-                pre = max(rec, key=lambda r: r.seen_t)
-                aimv = [math.atan2(pre.pos[1] - p[1], pre.pos[0] - p[0]), 0.0]
             for i, w in enumerate(me["weapons"]):
                 if w and w["kind"] == "gun" and w.get("ammo", 12) < w["stats"].get("mag", 12) and w.get("reload", 0) <= 0:
                     act["reload"] = True
                 if w and w["kind"] == "laser" and w.get("charge", 0) > 0:
                     fire[i] = True  # keep holding a charge we started (it will auto-fire eventually)
-                elif w and w["kind"] == "laser" and w.get("cooldown", 0) <= 0.05 and pre is not None:
-                    fire[i] = True  # an enemy was just here: charge now so we can fire as soon as it reappears
         if aimv is not None:
             act["aim"] = [round(aimv[0], 4), round(max(-0.69, min(1.29, aimv[1])), 4)]
         act["fire"] = fire
