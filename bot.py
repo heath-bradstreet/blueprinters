@@ -111,6 +111,20 @@ class Bot:
         self.known_crates = {}  # id -> (pos, seen_t)
         self.known_cubes = {}  # id -> (pos, seen_t)
         self.cover_t = -99.0
+        self.fort = None
+        self.fort_t = -99.0
+        self.expo = None
+        try:
+            import os
+            from array import array as _arr
+            e = _arr('B')
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "expo.bin"), "rb") as f:
+                e.frombytes(f.read())
+            if self.arena.ok and len(e) == self.arena.nx * self.arena.ny:
+                self.expo = e
+        except Exception as ex:
+            log("expo load failed", repr(ex))
+        log(f"expo ok={self.expo is not None}")
         self.t_start = time.perf_counter()
 
     # ------------------------------------------------------------------ helpers
@@ -281,6 +295,64 @@ class Bot:
             return None
         self.cover_spot = best[1]
         return best[1]
+
+    def fortress(self, obs, me, threats_xyz, t):
+        """A low-exposure pocket near us (walls on most sides, from the precomputed exposure map), inside the zone."""
+        if self.expo is None:
+            return None
+        if self.fort is not None and (t - self.fort_t < 2.0 or self.spent() > 0.004):
+            if self.in_current(obs, self.fort, 10.0):
+                return self.fort
+        if self.spent() > 0.006:
+            return self.fort
+        self.fort_t = t
+        A = self.arena
+        p = me["pos"]
+        I0 = int((p[0] - A.minx) / 4.0)
+        J0 = int((p[1] - A.miny) / 4.0)
+        late = obs["zone"]["shrink_start"] - t < 30
+        cx = cy = 0.0
+        for q in threats_xyz:
+            cx += q[0]; cy += q[1]
+        nthr = len(threats_xyz)
+        best = None
+        for dj in range(-22, 23, 2):
+            J = J0 + dj
+            if J < 0 or J >= A.ny:
+                continue
+            for di in range(-22, 23, 2):
+                I = I0 + di
+                if I < 0 or I >= A.nx:
+                    continue
+                c = J * A.nx + I
+                ev = self.expo[c]
+                if ev == 255 or A.nblocked[c]:
+                    continue
+                x, y = A.ncenter(c)
+                dd = d2(p, (x, y))
+                if dd > 90:
+                    continue
+                if not self.in_current(obs, (x, y), 14.0):
+                    continue
+                if late and not self.inside_future(obs, (x, y), 12.0):
+                    continue
+                s = ev + dd * 0.35
+                if nthr:
+                    tx, ty = cx / nthr, cy / nthr
+                    if d2((tx, ty), (x, y)) < d2((tx, ty), p) - 10:
+                        s += 25
+                if best is None or s < best[0]:
+                    best = (s, (x, y))
+        if best is None:
+            return self.fort
+        if self.fort is not None and self.in_current(obs, self.fort, 14.0):
+            c = A.ncell(*self.fort)
+            if c >= 0:
+                cur = self.expo[c] + d2(p, self.fort) * 0.35
+                if cur < best[0] + 12:
+                    return self.fort
+        self.fort = best[1]
+        return self.fort
 
     def find_short_cover(self, obs, me, threats_xyz, t, radius):
         """Closest spot within a short dash that the given threats can't see. Cached 0.4 s."""
@@ -525,6 +597,9 @@ class Bot:
                (n_threats >= 2 and hp_frac < 0.4) or (hp_frac < 0.22 and ehp > 200):
                 retreat = True
 
+        fort = None
+        if not retreat and (target is not None or hp_frac < 0.999 or t > 8.0):
+            fort = self.fortress(obs, me, [m["pos"] for dd, m in threats], t)
         if target is not None:
             tp = target["pos"]
             dist = d2(p, tp)
@@ -577,6 +652,13 @@ class Bot:
                 if urgency > 0.6 and zone_goal is not None:
                     zv = self.steer(me, zone_goal, t)
                     move = (zv[0] * 0.8 + px_ * 0.6, zv[1] * 0.8 + py_ * 0.6)
+                elif fort is not None and not (want < 40 and dist < 60):
+                    mode = "fort"
+                    if d2(p, fort) > 5.0:
+                        fv = self.steer(me, fort, t)
+                        move = (fv[0] + px_ * 0.3, fv[1] + py_ * 0.3)
+                    else:
+                        move = (px_ * 0.6 + (fort[0] - p[0]) * 0.15, py_ * 0.6 + (fort[1] - p[1]) * 0.15)
                 else:
                     if radial > 0 and self.arena.ok and not self.arena.walk_clear(p, tp):
                         av = self.steer(me, (tp[0], tp[1]), t)
@@ -626,6 +708,10 @@ class Bot:
                         mode = "heal"
             if goal is None:
                 goal, mode = self.loot_goal(obs, me, kinds, hp_frac)
+                if goal is not None and fort is not None and d2(p, goal) > 45 and mode != "drop":
+                    goal, mode = fort, "fort"
+            if goal is None and fort is not None:
+                goal, mode = fort, "fort"
             if goal is None and zone_goal is not None:
                 goal = zone_goal
                 mode = "zone"

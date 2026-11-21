@@ -2,5 +2,5 @@
 # 1 CPU, 512 MB, uid 65534, and the map at /arena.
 FROM python:3.13.5-slim-bookworm
 WORKDIR /bot
-COPY bot.py arena.py ./
+COPY bot.py arena.py expo.bin ./
 ENTRYPOINT ["python3", "-u", "/bot/bot.py"]
