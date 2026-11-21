@@ -104,7 +104,13 @@ def parse_patch(text: str) -> dict[str, set[int]]:
         if line.startswith("--- a/"):
             path = line[6:].strip()
         elif line.startswith("--- "):
-            path = line[4:].strip().lstrip("ab/")
+            # An ADDED file has no a-side: git writes `--- /dev/null`. Keep the
+            # sentinel intact so the b-side branch below picks the real name up.
+            # (A naive .lstrip("ab/") mangles "/dev/null" into "dev/null",
+            # which then looks like an ordinary unknown path and widens the
+            # selection to the whole suite -- safe, but 36.8 s per added file.)
+            stripped = line[4:].strip()
+            path = stripped if stripped == "/dev/null" else stripped.removeprefix("a/")
         elif line.startswith("+++ b/"):
             # Prefer the b-side name only when there is no a-side: for a rename
             # the a-side is the name coverage knows.
@@ -127,6 +133,54 @@ def parse_patch(text: str) -> dict[str, set[int]]:
 # --------------------------------------------------------------------------
 # THE SELECTION STEP
 # --------------------------------------------------------------------------
+def _translation(tests: list[dict]):
+    """Map the test numbers baked into the maps onto the ones we are given.
+
+    THE RISK THIS CLOSES. Every map ships bitsets keyed by test NUMBER, baked in
+    when the map was built. But numbers are not identities: in tests.json they
+    are 0..n-1 assigned in sorted-by-test-id order. So a single test added,
+    removed or renamed anywhere in the suite shifts roughly half of all numbers,
+    and every answer our maps give would then point at the wrong tests --
+    silently, with no crash and no warning, while the misses mount at 300 s
+    each. The final supplies its own /data/tests.json, so this is exactly the
+    kind of change we cannot rule out.
+
+    maps/testids.txt records the (number, id) pairs the maps were built from.
+    Test IDs are stable identities, so we rebuild the translation from them:
+
+      returns (translate, extra)
+        translate  None if the numbering is unchanged (the common case, and
+                   then nothing is paid for this), else {built number: current
+                   number} with ids that no longer exist dropped
+        extra      current numbers whose id the maps have never seen. No
+                   coverage-derived rule can ever select those, so they ride
+                   along on every commit -- the same treatment, and for the
+                   same reason, as a test with no coverage row.
+    """
+    path = os.path.join(MAPS, "testids.txt")
+    built: dict[str, int] = {}
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            num, _, tid = line.rstrip("\n").partition("\t")
+            built[tid] = int(num)
+
+    current = {t["id"]: t["number"] for t in tests}
+    if all(current.get(tid) == num for tid, num in built.items()) and len(
+        current
+    ) == len(built):
+        return None, set()
+
+    translate = {num: current[tid] for tid, num in built.items() if tid in current}
+    extra = {num for tid, num in current.items() if tid not in built}
+    print(
+        f"tests.json numbering differs from the maps: {len(translate)} of "
+        f"{len(built)} mapped tests still present, {len(extra)} new test(s) "
+        "will run on every commit",
+        file=sys.stderr,
+    )
+    return translate, extra
+
+
 class Selector:
     """The evidence ladder, over the committed maps.
 
@@ -135,17 +189,26 @@ class Selector:
     wrong. Degrading loudly on stderr beats a silent 300 s.
     """
 
-    def __init__(self, cov, aux, tests: list[dict]):
+    def __init__(self, cov, aux, tests: list[dict], translate=None, extra=()):
         self.cov = cov
         self.aux = aux
+        self.translate = translate
         self.all_tests = {t["number"] for t in tests}
         self.tests_by_file: dict[str, set[int]] = {}
         for t in tests:
             self.tests_by_file.setdefault(t["file"], set()).add(t["number"])
-        # Rung 0. Tests no coverage row mentions, so no rule can ever pick them.
-        self.ride_along: set[int] = set()
+        # Rung 0. Tests no coverage row mentions, so no rule can ever pick them,
+        # plus any test the maps have never heard of at all.
+        self.ride_along: set[int] = set(extra)
         if aux is not None:
-            self.ride_along = aux.orphan_tests() & self.all_tests
+            self.ride_along |= self._xlate(aux.orphan_tests()) & self.all_tests
+
+    def _xlate(self, nums: set[int]) -> set[int]:
+        """Map numbers as the maps know them onto numbers as we were given them."""
+        if self.translate is None:
+            return nums
+        t = self.translate
+        return {t[n] for n in nums if n in t}
 
     def _dialect_family(self, path: str) -> set[int]:
         """Tests covering any file implementing the same dialect as `path`."""
@@ -158,7 +221,7 @@ class Selector:
         out: set[int] = set()
         for d in DIALECT_DIRS:
             out |= self.cov.tests_for_file("sqlglot/%s/%s.py" % (d, stem))
-        return out
+        return self._xlate(out)
 
     def _filemap_tests(self, path: str) -> set[int]:
         if self.aux is None:
@@ -166,7 +229,7 @@ class Selector:
         hit = self.aux.filemap_tests(path)
         if not hit:
             return set(self.all_tests)
-        return hit
+        return self._xlate(hit)
 
     def select(self, changed: dict[str, set[int]]) -> set[int]:
         if self.cov is None or self.aux is None:
@@ -178,19 +241,46 @@ class Selector:
             if path.startswith("tests/fixtures/"):
                 hit = self.aux.tests_for_fixture(path)
                 if hit:
-                    sel |= hit
+                    sel |= self._xlate(hit)
                 else:
                     # Unknown fixture: take every test reading anything in its
                     # directory. A new fixture file is exactly the case where we
                     # have no measurement and must not guess narrow.
                     parent = path.rsplit("/", 1)[0] + "/"
+                    siblings: set[int] = set()
                     for p in self.aux.fixture_paths_with_prefix(parent):
-                        sel |= self.aux.tests_for_fixture(p)
+                        siblings |= self.aux.tests_for_fixture(p)
+                    if siblings:
+                        sel |= self._xlate(siblings)
+                    else:
+                        # A fixture in a directory we have never measured at
+                        # all. There is no evidence to narrow with, and
+                        # selecting nothing here is a 300 s bet on a file we
+                        # know nothing about -- so widen.
+                        return set(self.all_tests)
                 continue
 
-            # 2. a test file implicates its own tests
+            # 2. a changed module under tests/ implicates its own tests AND
+            #    every test whose module imports it.
+            #
+            #    Its own tests are not enough, and assuming they were cost us a
+            #    300 s miss on the hidden set. Two shapes break it:
+            #      * a module under tests/ that defines no tests of its own --
+            #        tests/helpers.py (imported by 1377 tests), tests/__init__.py
+            #        (1620), tests/dialects/__init__.py (1020). Its own-tests set
+            #        is EMPTY, so this rung used to select nothing at all.
+            #      * a real test file that other test files import from --
+            #        33 files do `from tests.dialects.test_dialect import
+            #        Validator`, so changing it reaches 1020 tests, not its own
+            #        113.
+            #    Per-test-FILE coverage answers exactly this question, because it
+            #    records which fresh-process test runs executed the file. For an
+            #    ordinary test file the closure equals its own tests, so this
+            #    costs nothing in the common case (test_optimizer.py: 167 and
+            #    167). A module absent from that map widens, as ever.
             if path.startswith("tests/") and path.endswith(".py"):
                 sel |= self.tests_by_file.get(path, set())
+                sel |= self._filemap_tests(path)
                 continue
 
             # 5a. a non-Python file we have no model for
@@ -202,7 +292,7 @@ class Selector:
                 return set(self.all_tests)
 
             # 3. function-body changes: precise line coverage
-            sel |= self.cov.tests_for_lines(path, lines)
+            sel |= self._xlate(self.cov.tests_for_lines(path, lines))
 
             # 4. module-level changes need a backstop
             if self.aux.module_level_lines(path, lines):
