@@ -76,7 +76,7 @@ class Bot:
     def __init__(self, hello):
         self.cfg = hello["config"]
         self.slot = int(hello.get("slot", 0))
-        self.rng = random.Random(int(hello.get("seed", 1)) ^ 0x5EED)
+        self.rng = random.Random(int(hello.get("seed", 1)) ^ 0x5C6D)
         mp = hello.get("map") or {}
         t0 = time.perf_counter()
         self.arena = Arena(mp.get("dir", "/arena"), mp.get("files"))
@@ -521,8 +521,8 @@ class Bot:
         jump = False
         mode = "roam"
 
-        retreat = target is not None  # PROBE: never fight, always get away
-        if False:
+        retreat = False
+        if target is not None:
             # outgunned: low HP vs healthier enemy, or several enemies on us
             ehp = target.get("hp", 1400)
             if (hp_frac < 0.5 and ehp > me["hp"] * 1.3) or (n_threats >= 3 and hp_frac < 0.6) or \
@@ -699,7 +699,6 @@ class Bot:
 
         # -------------------------------------------------- aim and fire
         self.aim_and_fire(obs, me, act, target, kinds, energy)
-        act["fire"] = [False, False]  # PROBE: pacifist - measure how many house bots die without us
 
         # -------------------------------------------------- loot actions (take weapons, swap)
         self.loot_actions(obs, me, act, kinds, target)
