@@ -708,7 +708,7 @@ class Bot:
                         mode = "heal"
             if goal is None:
                 goal, mode = self.loot_goal(obs, me, kinds, hp_frac)
-                if goal is not None and fort is not None and d2(p, goal) > 45 and mode != "drop":
+                if goal is not None and fort is not None and d2(p, goal) > 45 and mode in ("crate", "cube"):
                     goal, mode = fort, "fort"
             if goal is None and fort is not None:
                 goal, mode = fort, "fort"
