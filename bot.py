@@ -28,9 +28,9 @@ TAU = 2 * math.pi
 # no mortar: carrying one makes enemy lasers hit us 60% harder (cook-off), and we rarely land shells
 WEAPON_RANK = {"laser": 3, "lightning": 2, "mortar": -5, "gun": 0}
 UPGRADE_RANK = [
-    "servos", "reactor", "capacitor", "armor", "plating", "nanites", "laser_damage", "laser_charge", "gun_rate", "gun_damage",
-    "lightning_efficiency", "lightning_range", "gun_mag", "gun_velocity",
-    "jets", "gyros", "lightning_chain", "mortar_reload", "mortar_velocity",
+    "armor", "plating", "nanites", "laser_damage", "laser_charge", "gun_rate", "gun_damage",
+    "lightning_efficiency", "lightning_range", "gun_mag", "gun_velocity", "servos", "capacitor",
+    "reactor", "jets", "gyros", "lightning_chain", "mortar_reload", "mortar_velocity",
     "mortar_splash", "laser_pierce", "sensors",
 ]
 
@@ -621,7 +621,7 @@ class Bot:
                         mode = "ring"
                 # boost-strafe when under fire and we can afford it (keep energy for lightning)
                 reserve = 35 if "lightning" in kinds else 20
-                boost = energy > reserve - 12  # always boost-strafe in fights
+                boost = energy > reserve and (recent_dmg > 0 or dist < 160)
                 # dodge an aimed laser: if they charge at us, break the line sideways hard
                 charging = [m for dd, m in threats if m.get("charging") and dd < 290]
                 if in_ring:
@@ -719,8 +719,11 @@ class Bot:
             if kind in kinds:
                 continue
             r = WEAPON_RANK.get(kind, 0)
-            if r <= cur_rank:
+            pair = kinds[0] == "gun" and kinds[1] in ("laser", "lightning") and kind in ("laser", "lightning")
+            if r <= cur_rank and not pair:
                 continue
+            if pair:
+                r = 3
             dd = d2(p, pos)
             reach = 260 if cur_rank < 0 else 160
             if dd > reach or abs(pos[2] - p[2]) > 6:
@@ -862,11 +865,20 @@ class Bot:
                 continue
             if best is None or r > best[0]:
                 best = (r, pk)
+        w1 = me["weapons"][1] if len(me["weapons"]) > 1 else None
+        w0 = me["weapons"][0]
+        # laser + lightning, no gun: swap the gun out for the weapon we lack
+        if w0 is not None and w0["kind"] == "gun" and w1 is not None and w1["kind"] in ("laser", "lightning"):
+            want = "lightning" if w1["kind"] == "laser" else "laser"
+            for pk in obs["pickups"]:
+                if pk["kind"] == want and d2(p, pk["pos"]) <= reach - 0.3 and abs(pk["pos"][2] - p[2]) <= 3.8 \
+                        and t - self.bad_pickups.get(pk["id"], -99) >= 3 and (target is None or d2(p, target["pos"]) > 60):
+                    act["take"] = pk["id"]
+                    act["drop"] = 0
+                    return
         if best is None:
             return
         r, pk = best
-        w1 = me["weapons"][1] if len(me["weapons"]) > 1 else None
-        w0 = me["weapons"][0]
         if w0 is None:
             act["take"] = pk["id"]
             return
