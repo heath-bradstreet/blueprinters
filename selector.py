@@ -196,6 +196,14 @@ class Selector:
         # Whether coverage is consulted about module-level changed lines. See
         # rung 3. BR_MODLEVEL_COV=0 selects the tighter, less defensive answer.
         self.modlevel_cov = os.environ.get("BR_MODLEVEL_COV", "1") != "0"
+        # {dialect: itself and every dialect inheriting from it}. Missing file
+        # degrades to "just this dialect", which is the old, thinner behaviour.
+        self.dialect_tree: dict[str, list[str]] = {}
+        try:
+            with open(os.path.join(MAPS, "dialect_tree.json"), "rb") as fh:
+                self.dialect_tree = json.loads(fh.read())
+        except Exception as exc:  # noqa: BLE001
+            print(f"dialect_tree.json unavailable ({exc!r})", file=sys.stderr)
         self.translate = translate
         self.all_tests = {t["number"] for t in tests}
         self.num_of = {t["id"]: t["number"] for t in tests}
@@ -216,7 +224,31 @@ class Selector:
         return {t[n] for n in nums if n in t}
 
     def _dialect_family(self, path: str) -> set[int]:
-        """Tests covering any file implementing the same dialect as `path`."""
+        """Tests of the dialect `path` implements, and of every dialect that
+        inherits from it.
+
+        sqlglot implements each dialect across dialects/, parsers/, generators/,
+        typing/ and tokenizers/, so coverage of those five files is the first
+        source. But coverage alone is demonstrably not enough here, and the gap
+        is a 300 s miss waiting to happen:
+
+          * A dialect module is a pure declarative class body, so its lines run
+            once at import and coverage credits them to almost nothing --
+            sqlglot/dialects/solr.py has exactly ONE covering test, and 36 of
+            184 source files have three or fewer.
+          * Dialects inherit. spark subclasses spark2 subclasses hive, so a
+            spark test may execute only hive's lines and never touch spark.py
+            at all. Measured: a module-level edit to spark.py selected 8 of the
+            31 tests in tests/dialects/test_spark.py, and for solr it selected
+            0 of 1.
+
+        Both are closed structurally rather than by coverage. sqlglot's suite is
+        organised one file per dialect, so the tests of dialect X are
+        tests/dialects/test_X.py; and a change to X's class body changes every
+        dialect that inherits those attribute tables, which maps/dialect_tree.json
+        records (read from sqlglot at the pinned commit: hive -> databricks,
+        hive, spark, spark2). Union both in.
+        """
         base = path.rsplit("/", 1)[-1]
         if not base.endswith(".py"):
             return set()
@@ -226,7 +258,11 @@ class Selector:
         out: set[int] = set()
         for d in DIALECT_DIRS:
             out |= self.cov.tests_for_file("sqlglot/%s/%s.py" % (d, stem))
-        return self._xlate(out)
+        out = self._xlate(out)
+        # The dialect's own tests, plus those of every dialect inheriting from it.
+        for name in self.dialect_tree.get(stem, (stem,)):
+            out |= self.tests_by_file.get("tests/dialects/test_%s.py" % name, set())
+        return out
 
     def _filemap_tests(self, path: str) -> set[int]:
         if self.aux is None:

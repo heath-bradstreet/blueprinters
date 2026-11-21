@@ -38,10 +38,15 @@ COPY maps/cov.brdm /app/maps/cov.brdm
 COPY maps/aux.brs /app/maps/aux.brs
 COPY maps/symref.json.gz /app/maps/symref.json.gz
 COPY maps/testids.txt /app/maps/testids.txt
+# dialect_tree.json  which dialects inherit from which, read from sqlglot at the
+#                    pinned commit: a change to hive.py is a change to spark2,
+#                    spark and databricks, whose tests never touch hive.py
+COPY maps/dialect_tree.json /app/maps/dialect_tree.json
 
 RUN chmod 0444 /app/selector.py /app/brmap.py /app/auxmap.py /app/symref.py \
                /app/maps/cov.brdm /app/maps/aux.brs \
-               /app/maps/symref.json.gz /app/maps/testids.txt
+               /app/maps/symref.json.gz /app/maps/testids.txt \
+               /app/maps/dialect_tree.json
 
 # Run unprivileged. The scorer also passes --user 65534:65534; setting it here
 # means the image is correct on its own and never depends on root.
