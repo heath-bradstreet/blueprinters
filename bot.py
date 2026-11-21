@@ -495,13 +495,23 @@ class Bot:
         if threats:
             def score(item):
                 dd, m = item
+                # kill-focused: seconds to kill it, minus how dangerous it is (and stick with a target)
                 hpv = m.get("hp", 1400)
-                s = dd + hpv * 0.06
+                ws = m.get("weapons") or []
+                s = dd / 45.0 + hpv / 230.0
+                if hpv <= 360:
+                    s -= 1.5  # one laser shot (or a short burst) finishes it
+                if m.get("charging"):
+                    s -= 1.5  # a charging laser is about to hit someone: hit it first
+                if "laser" in ws:
+                    s -= 0.5
+                if "lightning" in ws and dd < 50:
+                    s -= 0.8
                 tr = self.tracks.get(m["id"])
                 if tr is not None and t - tr.last_dmg_t < 3.0:
-                    s -= 60  # whoever is hurting us
+                    s -= 1.2  # whoever is hurting us
                 if m["id"] == self.target_id:
-                    s -= 25  # stickiness
+                    s -= 0.7  # stickiness
                 return s
             target = min(threats, key=score)[1]
             self.target_id = target["id"]
