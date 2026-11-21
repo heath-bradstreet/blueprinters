@@ -199,21 +199,14 @@ class Arena:
             return True
         ftop, fg = self.ftop, self.fground
         minx, miny, fxn = self.minx, self.miny, self.fx
-        fyn = self.fy
-        inv = 1.0 / n
-        sx, sy, sz = dx * inv / FINE, dy * inv / FINE, dz * inv
-        gx = (a[0] - minx) / FINE
-        gy = (a[1] - miny) / FINE
-        z = a[2]
         for s in range(1, n):
-            gx += sx
-            gy += sy
-            z += sz
-            if gx <= -1.0 or gy <= -1.0:
-                return False
-            i = int(gx)
-            j = int(gy)
-            if i >= fxn or j >= fyn:
+            t = s / n
+            x = a[0] + dx * t
+            y = a[1] + dy * t
+            z = a[2] + dz * t
+            i = int((x - minx) / FINE)
+            j = int((y - miny) / FINE)
+            if i < 0 or j < 0 or i >= fxn or j >= self.fy:
                 return False
             c = j * fxn + i
             if z < ftop[c] - 0.3 or z < fg[c] - 0.5:
@@ -275,7 +268,6 @@ class Arena:
         nx = self.nx
         blocked = self.nblocked
         ng = self.nground
-        ny_ = self.ny
         gJ, gI = divmod(g, nx)
         SQ2 = 1.41421356
         def h(c):
@@ -308,7 +300,7 @@ class Arena:
             gc = ng[c]
             for di, dj, w in nbrs:
                 I2, J2 = I + di, J + dj
-                if I2 < 0 or J2 < 0 or I2 >= nx or J2 >= ny_:
+                if I2 < 0 or J2 < 0 or I2 >= nx or J2 >= self.ny:
                     continue
                 c2 = J2 * nx + I2
                 if blocked[c2] or c2 in closed:
@@ -325,13 +317,7 @@ class Arena:
                 if nd < dist.get(c2, 1e18):
                     dist[c2] = nd
                     prev[c2] = c
-                    a = I2 - gI
-                    if a < 0:
-                        a = -a
-                    b = J2 - gJ
-                    if b < 0:
-                        b = -b
-                    hh = (a + b) + (SQ2 - 2) * (a if a < b else b)
+                    hh = h(c2)
                     heapq.heappush(openq, (nd + hh, c2))
                     if hh < best:
                         best, bestc = hh, c2
