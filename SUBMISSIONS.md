@@ -16,3 +16,4 @@ Best score is entered in the final automatically; we never pick anything else.
 | Fri 10:09 PM | BB-E1545419 | baf3c05 | Reuse cover spot 2.5 s, replan paths every 1.0 s | 2.41 vs 2.38 (level) | 3.77 (reverted) |
 | Fri 10:25 PM | BB-334F3BF6 | 43b8363 | Refresh cover every 1.0 s, replan paths every 0.35 s | 2.54 vs 2.41, 2.42 vs 2.32 | 3.42 (reverted) |
 | Fri 10:39 PM | BB-412C3122 | 248f381 | Retreat earlier when outgunned (hp < 60% instead of 50%) | level (2.36) | 3.77 (reverted) |
+| Fri 10:58 PM | BB-05EA9E01 | ce69674 | Repeat of best, unchanged (noise check) | - | **3.94** (final; repeat confirms scores reproduce within ~0.02) |
