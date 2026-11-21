@@ -259,8 +259,8 @@ class Arena:
         `avoid(x, y) -> extra cost` can weight cells (e.g. near enemies)."""
         if not self.ok:
             return None
-        s = self.nearest_free(self.ncell(*start))
-        g = self.nearest_free(self.ncell(*goal))
+        s = self.nearest_free(self.ncell(start[0], start[1]))
+        g = self.nearest_free(self.ncell(goal[0], goal[1]))
         if s < 0 or g < 0:
             return None
         if s == g:

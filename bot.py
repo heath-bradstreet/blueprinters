@@ -102,6 +102,8 @@ class Bot:
         self.target_id = None
         self.bad_pickups = {}
         self.wander_goal = None
+        self.cover_spot = None
+        self.cover_t = -99.0
 
     # ------------------------------------------------------------------ helpers
     def wstat(self, kind, key, default=0.0):
@@ -222,6 +224,51 @@ class Bot:
             self.path_t = -99.0
             return True
         return False
+
+    def find_cover(self, obs, me, threats_xyz, t, radius=70.0):
+        """A nearby walkable spot (inside the zone) that none of `threats_xyz` can see. Cached ~1.5 s."""
+        A = self.arena
+        if not A.ok:
+            return None
+        p = me["pos"]
+        if self.cover_spot is not None and t - self.cover_t < 1.5:
+            return self.cover_spot
+        self.cover_t = t
+        best = None
+        cands = []
+        for r in (14.0, 26.0, 40.0, 55.0, radius):
+            n = 12 if r < 30 else 16
+            off = self.rng.uniform(0, TAU)
+            for k in range(n):
+                a = off + TAU * k / n
+                cands.append((p[0] + r * math.cos(a), p[1] + r * math.sin(a), r))
+        if self.cover_spot is not None:
+            cands.append((self.cover_spot[0], self.cover_spot[1], d2(p, self.cover_spot)))
+        for (x, y, r) in cands:
+            c = A.ncell(x, y)
+            if c < 0 or A.nblocked[c]:
+                continue
+            if not self.in_current(obs, (x, y), 12.0):
+                continue
+            if obs["zone"]["shrink_start"] - t < 25 and not self.inside_future(obs, (x, y), 10.0):
+                continue
+            gz = A.ground(x, y)
+            seen = 0
+            for q in threats_xyz:
+                if A.los((q[0], q[1], q[2] + 8.0), (x, y, gz + 7.0)):
+                    seen += 1
+            s = seen * 1000 + r
+            # avoid running past the threats to get there
+            for q in threats_xyz:
+                if d2(q, (x, y)) < d2(q, p) - 10:
+                    s += 40
+            if best is None or s < best[0]:
+                best = (s, (x, y), seen)
+        if best is None or best[2] > 0:
+            self.cover_spot = None
+            return None
+        self.cover_spot = best[1]
+        return best[1]
 
     # ------------------------------------------------------------------ perception
     def update_tracks(self, obs):
@@ -394,8 +441,8 @@ class Bot:
         if target is not None:
             # outgunned: low HP vs healthier enemy, or several enemies on us
             ehp = target.get("hp", 1400)
-            if (hp_frac < 0.35 and ehp > me["hp"] * 1.2) or (n_threats >= 3 and hp_frac < 0.6) or \
-               (hp_frac < 0.22):
+            if (hp_frac < 0.5 and ehp > me["hp"] * 1.3) or (n_threats >= 3 and hp_frac < 0.6) or \
+               (n_threats >= 2 and hp_frac < 0.4) or (hp_frac < 0.22 and ehp > 200):
                 retreat = True
 
         if target is not None:
@@ -432,8 +479,12 @@ class Bot:
                     zx, zy = unit(zc[0] - p[0], zc[1] - p[1])
                     ax, ay = unit(ax + zx * 1.5, ay + zy * 1.5)
                     cand = (p[0] + ax * 60, p[1] + ay * 60)
+                cov = self.find_cover(obs, me, [m["pos"] for dd, m in threats], t)
+                if cov is not None:
+                    cand = cov
+                    mode = "cover"
                 mv = self.steer(me, cand, t)
-                move = (mv[0] * 0.8 + px_ * 0.45, mv[1] * 0.8 + py_ * 0.45)
+                move = (mv[0] * 0.85 + px_ * 0.35, mv[1] * 0.85 + py_ * 0.35)
                 boost = energy > 10
             else:
                 mode = "fight"
@@ -472,6 +523,13 @@ class Bot:
             if zone_goal is not None and urgency > 0.25:
                 goal = zone_goal
                 mode = "zone"
+            if goal is None and hp_frac < 0.75:
+                recent = [tr.pos for tr in self.tracks.values() if t - tr.seen_t < 25.0]
+                if recent:
+                    cov = self.find_cover(obs, me, recent, t)
+                    if cov is not None:
+                        goal = cov
+                        mode = "heal"
             if goal is None:
                 goal, mode = self.loot_goal(obs, me, kinds, hp_frac)
             if goal is None and zone_goal is not None:
@@ -643,7 +701,9 @@ class Bot:
                 st = w.get("stats", {})
                 if k == "gun":
                     rng_ = st.get("range", 230)
-                    if dist < rng_ - 5 and clear and ang_err < tol * 2.5 and w.get("reload", 0) <= 0 and w.get("ammo", 1) > 0:
+                    tspd = math.hypot(tv[0], tv[1])
+                    reach_ok = dist < 125 or tspd < 4.0 or (dist < 175 and tspd < 9.0) or tgt.get("kind") != "mech"
+                    if dist < rng_ - 5 and reach_ok and clear and ang_err < tol * 2.5 and w.get("reload", 0) <= 0 and w.get("ammo", 1) > 0:
                         fire[i] = True
                 elif k == "lightning":
                     rng_ = st.get("range", 45)
