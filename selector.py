@@ -235,11 +235,36 @@ class Selector:
         self.tests_by_file: dict[str, set[int]] = {}
         for t in tests:
             self.tests_by_file.setdefault(t["file"], set()).add(t["number"])
+        # Tests that transpile across EVERY dialect, so a change to ANY dialect
+        # can break them. See maps/crossdialect.json and
+        # tools/build_crossdialect.py.
+        self.crossdialect: set[int] = set()
+        try:
+            with open(os.path.join(MAPS, "crossdialect.json"), "rb") as fh:
+                self.crossdialect = self._xlate_ids(json.loads(fh.read()))
+        except Exception as exc:  # noqa: BLE001
+            print(f"crossdialect.json unavailable ({exc!r})", file=sys.stderr)
         # Rung 0. Tests no coverage row mentions, so no rule can ever pick them,
         # plus any test the maps have never heard of at all.
         self.ride_along: set[int] = set(extra)
         if aux is not None:
             self.ride_along |= self._xlate(aux.orphan_tests()) & self.all_tests
+
+    def _xlate_ids(self, blob: dict) -> set[int]:
+        """Resolve crossdialect.json to CURRENT test numbers.
+
+        It stores numbers from build time, so re-resolve via by_file + the
+        runtime tests.json rather than trusting them -- the same reason
+        _translation exists.
+        """
+        by_file = blob.get("by_file", {})
+        out: set[int] = set()
+        for tid, num in self.num_of.items():
+            f, _, meth = tid.rpartition("::")
+            f = f.split("::", 1)[0]
+            if meth in by_file.get(f, ()):
+                out.add(num)
+        return out or set(blob.get("tests", ()))
 
     def _xlate(self, nums: set[int]) -> set[int]:
         """Map numbers as the maps know them onto numbers as we were given them."""
@@ -310,6 +335,23 @@ class Selector:
         # milliseconds each rather than dragging in the 21 s executor tests.
         for f in GENERIC_TEST_FILES:
             out |= {n for n in self.tests_by_file.get(f, ()) if self.dur.get(n, 0) < EXPENSIVE_MS}
+        # ...and the CROSS-DIALECT tests, which transpile one statement across
+        # every dialect that exists:
+        #
+        #     write = {d.value: "FLOOR(__time TO WEEK)" for d in Dialects}
+        #     self.validate_all("FLOOR(__time TO WEEK)", write=write)
+        #
+        # So a change to ANY dialect's generator can break a test in a file with
+        # no other connection to it. No coverage or import map can see this --
+        # the dialect set is built at RUNTIME from the Dialects enum, so there is
+        # no static reference from test_druid to risingwave at all. Found by the
+        # generated corpus: flipping one operator in generators/risingwave.py
+        # breaks tests/dialects/test_druid.py.
+        #
+        # Five of the six cost 4-26 ms, so this is nearly free. The sixth,
+        # test_generator_memory at 6.7 s, is above EXPENSIVE_MS and so is
+        # governed by the same break-even rule as every other expensive test.
+        out |= {n for n in self.crossdialect if self.dur.get(n, 0) < EXPENSIVE_MS}
         return out
 
     def _filemap_tests(self, path: str) -> tuple[set[int], bool]:

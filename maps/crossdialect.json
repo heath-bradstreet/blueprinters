@@ -1,0 +1,1 @@
+{"by_file":{"tests/dialects/test_dialect.py":["test_enum","test_partition_by_excluding"],"tests/dialects/test_druid.py":["test_druid"],"tests/dialects/test_spark.py":["test_strip_modifiers"],"tests/test_generator.py":["test_generator_memory"],"tests/test_time.py":["test_canonical_time_format_vocabulary"]},"tests":[184,231,314,821,1224,1568]}

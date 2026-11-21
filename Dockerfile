@@ -42,11 +42,14 @@ COPY maps/testids.txt /app/maps/testids.txt
 #                    pinned commit: a change to hive.py is a change to spark2,
 #                    spark and databricks, whose tests never touch hive.py
 COPY maps/dialect_tree.json /app/maps/dialect_tree.json
+# crossdialect.json  the tests that transpile across EVERY dialect, so a change
+#                    to any one of them can break a test in an unrelated file
+COPY maps/crossdialect.json /app/maps/crossdialect.json
 
 RUN chmod 0444 /app/selector.py /app/brmap.py /app/auxmap.py /app/symref.py \
                /app/maps/cov.brdm /app/maps/aux.brs \
                /app/maps/symref.json.gz /app/maps/testids.txt \
-               /app/maps/dialect_tree.json
+               /app/maps/dialect_tree.json /app/maps/crossdialect.json
 
 # Run unprivileged. The scorer also passes --user 65534:65534; setting it here
 # means the image is correct on its own and never depends on root.
