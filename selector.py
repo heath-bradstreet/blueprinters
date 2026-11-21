@@ -244,6 +244,27 @@ class Selector:
                 self.crossdialect = self._xlate_ids(json.loads(fh.read()))
         except Exception as exc:  # noqa: BLE001
             print(f"crossdialect.json unavailable ({exc!r})", file=sys.stderr)
+        # dialect -> tests that name it as a literal string. A dialect test
+        # asserts transpilation BETWEEN dialects and names the other side as a
+        # string, so test_duckdb depends on starrocks' implementation. Resolved
+        # at run time through Dialect.get_or_raise, so no map built from imports
+        # or coverage can see it. See tools/build_dialectrefs.py.
+        self.dialect_refs: dict[str, set[int]] = {}
+        try:
+            with open(os.path.join(MAPS, "dialectrefs.json"), "rb") as fh:
+                blob = json.loads(fh.read())
+            by_test = blob.get("by_test", {})
+            # Re-resolve against the RUNTIME tests.json rather than trusting the
+            # numbers baked in at build time -- same reason _translation exists.
+            acc: dict[str, set[int]] = {}
+            for tid, num in self.num_of.items():
+                f, _, meth = tid.rpartition("::")
+                f = f.split("::", 1)[0]
+                for d in by_test.get(f"{f}::{meth}") or by_test.get(f"{f}::*") or ():
+                    acc.setdefault(d, set()).add(num)
+            self.dialect_refs = acc
+        except Exception as exc:  # noqa: BLE001
+            print(f"dialectrefs.json unavailable ({exc!r})", file=sys.stderr)
         # Rung 0. Tests no coverage row mentions, so no rule can ever pick them,
         # plus any test the maps have never heard of at all.
         self.ride_along: set[int] = set(extra)
@@ -352,6 +373,26 @@ class Selector:
         # test_generator_memory at 6.7 s, is above EXPENSIVE_MS and so is
         # governed by the same break-even rule as every other expensive test.
         out |= {n for n in self.crossdialect if self.dur.get(n, 0) < EXPENSIVE_MS}
+        # ...and every test that NAMES this dialect as a literal string. A
+        # dialect test asserts transpilation between dialects:
+        #
+        #     # test_duckdb.py
+        #     self.validate_all("...", write={"starrocks": "...", ...})
+        #
+        # so test_duckdb depends on starrocks, and changing starrocks.py breaks
+        # it. The dialect is resolved from that string at run time through
+        # Dialect.get_or_raise, so there is no static reference and no import
+        # edge for coverage to find. This was the hidden-set miss: confirmed on
+        # three independently relabelled corpus cases, including
+        # postgres.py -> test_starrocks.py::test_array_contains_all.
+        #
+        # Bounded by the same break-even rule, so the 21 s executor tests are
+        # not dragged in by a dialect edit they merely mention.
+        for name in self.dialect_tree.get(stem, (stem,)):
+            out |= {
+                n for n in self.dialect_refs.get(name, ())
+                if self.dur.get(n, 0) < EXPENSIVE_MS
+            }
         return out
 
     def _filemap_tests(self, path: str) -> tuple[set[int], bool]:
