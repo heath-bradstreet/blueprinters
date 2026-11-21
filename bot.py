@@ -12,6 +12,7 @@ from __future__ import annotations
 import gc
 import json
 import math
+import os
 import queue
 import random
 import sys
@@ -111,9 +112,56 @@ class Bot:
         self.known_crates = {}  # id -> (pos, seen_t)
         self.known_cubes = {}  # id -> (pos, seen_t)
         self.cover_t = -99.0
+        self.expo = None
+        try:
+            from array import array as _arr
+            e = _arr('B')
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "expo.bin"), "rb") as f:
+                e.frombytes(f.read())
+            if self.arena.ok and len(e) == self.arena.nx * self.arena.ny:
+                self.expo = e
+        except Exception as ex:
+            log("expo load failed", repr(ex))
+        self.spath = None
+        self.spath_t = -99.0
+        self.spath_goal = None
         self.t_start = time.perf_counter()
 
     # ------------------------------------------------------------------ helpers
+    def steer_safe(self, me, goal, t):
+        """Like steer, but the route to a supply drop prefers covered cells and keeps away from enemies we know."""
+        A = self.arena
+        p = me["pos"]
+        th = [tr.pos for tr in self.tracks.values() if t - tr.seen_t < 8.0]
+        if not A.ok or self.expo is None or not th or d2(p, goal) < 25:
+            return self.steer(me, goal, t)
+        th.sort(key=lambda q: d2(p, q))
+        th = th[:4]
+        replan = (self.spath is None or self.spath_goal is None or d2(self.spath_goal, goal) > 6 or t - self.spath_t > 1.5)
+        if replan and t - self.spath_t > 0.5 and self.spent() < 0.004:
+            expo = self.expo
+            nx = A.nx
+            minx, miny = A.minx, A.miny
+            def avoid(c):
+                J, I = divmod(c, nx)
+                x, y = minx + (I + 0.5) * 4.0, miny + (J + 0.5) * 4.0
+                cost = expo[c] / 128.0
+                for q in th:
+                    dx, dy = x - q[0], y - q[1]
+                    dd = dx * dx + dy * dy
+                    if dd < 3600.0:
+                        cost += (60.0 - math.sqrt(dd)) / 20.0
+                return cost
+            self.spath_t = t
+            self.spath_goal = goal
+            self.spath = A.astar((p[0], p[1]), goal, max_exp=900, avoid=avoid)
+        if self.spath:
+            while len(self.spath) > 1 and d2(p, self.spath[0]) < 4.0:
+                self.spath.pop(0)
+            wp = self.spath[0]
+            return unit(wp[0] - p[0], wp[1] - p[1])
+        return self.steer(me, goal, t)
+
     def wstat(self, kind, key, default=0.0):
         try:
             return float(self.cfg["weapons"][kind][key])
@@ -530,9 +578,6 @@ class Bot:
                 retreat = True
 
         dgoal = self.drop_goal(obs, me)
-        if dgoal is not None and hp_frac < 0.5 and d2(p, dgoal) > 60 and (threats or recent_dmg > 0) and \
-                any(dr.get("lands_in", 0) <= 0 and d2(dr["pos"], dgoal) < 1.0 for dr in obs.get("drops") or []):
-            dgoal = None  # a landed drop waits: shake off the fight first instead of marching to it under fire
         if target is not None:
             tp = target["pos"]
             dist = d2(p, tp)
@@ -575,7 +620,7 @@ class Bot:
                     # a supply drop is a full repair: retreat onto it rather than just away
                     cand = dgoal
                     mode = "drop"
-                mv = self.steer(me, cand, t)
+                mv = self.steer_safe(me, cand, t) if mode == "drop" else self.steer(me, cand, t)
                 move = (mv[0] * 0.85 + px_ * 0.35, mv[1] * 0.85 + py_ * 0.35)
                 boost = energy > 10
             else:
@@ -611,7 +656,7 @@ class Bot:
                 if dgoal is not None:
                     landed = any(d2(dr["pos"], dgoal) < 1.0 and dr.get("lands_in", 0) <= 0 for dr in obs.get("drops") or [])
                     if d2(p, dgoal) > 5.5 or not landed:
-                        gv = self.steer(me, dgoal, t)
+                        gv = self.steer_safe(me, dgoal, t)
                         move = (gv[0] + px_ * 0.25, gv[1] + py_ * 0.25)
                         mode = "drop"
                     else:
@@ -670,7 +715,7 @@ class Bot:
                     goal = (nc[0], nc[1])
                     mode = "center"
             if goal is not None:
-                move = self.steer(me, goal, t)
+                move = self.steer_safe(me, goal, t) if mode == "drop" else self.steer(me, goal, t)
                 boost = urgency > 0.7 and energy > 20
             # healing: walk slowly (silent under 5 m/s) when hurt and not in a hurry
             if goal is None or (hp_frac < 0.7 and urgency < 0.5 and mode != "zone"):
@@ -775,7 +820,7 @@ class Bot:
                 continue
             q = dr["pos"]
             dd = d2(p, q)
-            if dd > (500 if dr.get("lands_in", 0) <= 0 else 320) or not self.in_current(obs, q, 5.0):
+            if dd > 320 or not self.in_current(obs, q, 5.0):
                 continue
             eta = dd / max(1.0, speed)
             if dr.get("lands_in", 0) - eta > 6.0:
