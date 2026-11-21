@@ -62,3 +62,4 @@ still overrates dodging; other builds land within noise of each other, as offici
 | Sat 11:14 AM | BB-26F99E9A | 7a82c6d | Re-roll of the 4.17 build: only the bot RNG salt changed (0x5EED -> 0xB10E), to measure practice noise on identical logic (sandbox PASS x2) | n/a (identical logic) | 3.77 (same logic as 4.17: practice noise is about ±0.4; final stays e72e3c0 4.17) |
 | Sat 12:39 PM | BB-B6EC141D | f018c80 | Re-roll of the 4.17 build: RNG salt 0x1A2B only (sandbox PASS x2) | n/a (identical logic) | 4.02 (final stays e72e3c0 4.17) |
 | Sat 12:48 PM | BB-59BF6327 | 93a01ed | Re-roll of the 4.17 build: RNG salt 0x2C3D only (sandbox PASS x2) | n/a (identical logic) | 3.88 (final stays e72e3c0 4.17) |
+| Sat 12:56 PM | BB-67B508C9 | 51a68ec | Re-roll of the 4.17 build: RNG salt 0x3E4F only (sandbox PASS x2) | n/a (identical logic) | pending |
