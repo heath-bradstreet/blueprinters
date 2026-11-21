@@ -17,6 +17,7 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+FFA = os.environ.get("MECH_FFA") == "1"  # 16-mech free-for-all (qualifying/final format) instead of practice squad
 sys.path.insert(0, os.path.dirname(HERE))
 from arena import Arena  # noqa: E402
 import bot as B  # noqa: E402
@@ -91,7 +92,7 @@ class Sim:
         h = dict(self.hello)
         h["slot"] = self.ours
         self.bot = ours_factory(h)
-        skills = skill_mix or (["easy"] * 4 + ["medium"] * 4 + ["hard"] * 4 + ["expert"] * 3)
+        skills = skill_mix or ((["hard"] * 8 + ["expert"] * 7) if FFA else (["easy"] * 4 + ["medium"] * 4 + ["hard"] * 4 + ["expert"] * 3))
         self.skill = {}
         k = 0
         for m in self.mechs:
@@ -412,7 +413,18 @@ class Sim:
             self.last_us = (list(us.pos), t)
         goal = None
         tgt = None
-        if hunting:
+        if FFA:
+            # free-for-all: fight the nearest mech we can see (or that is very close)
+            best = None
+            for o in self.mechs:
+                if o.alive and o.id != m.id:
+                    dd = d2(m.pos, o.pos)
+                    if (dd < 60 or self.sees(m, o)) and (best is None or dd < best[0]):
+                        best = (dd, o)
+            if best is not None:
+                tgt = best[1]
+                goal = tgt.pos[:2]
+        elif hunting:
             goal = us.pos[:2]
             if self.sees(m, us) or (squad_sees and d2(m.pos, us.pos) < 200):
                 tgt = us
@@ -425,23 +437,24 @@ class Sim:
                 rr = math.sqrt(self.r.random()) * self.nr * 0.7
                 m.wander = [self.nc[0] + rr * math.cos(ang), self.nc[1] + rr * math.sin(ang)]
             goal = m.wander
-        dist = d2(m.pos, us.pos)
+        T = tgt if tgt is not None else us
+        dist = d2(m.pos, T.pos)
         if tgt is not None:
             want = 140 if (m.weapons[1] and m.weapons[1]["kind"] == "laser") else (30 if (m.weapons[1] and m.weapons[1]["kind"] == "lightning") else 100)
-            dx, dy = us.pos[0] - m.pos[0], us.pos[1] - m.pos[1]
+            dx, dy = T.pos[0] - m.pos[0], T.pos[1] - m.pos[1]
             n = math.hypot(dx, dy) or 1
             side = 1 if (int(t / 1.5) + m.id) % 2 else -1
             rad = 0.8 if dist > want + 20 else (-0.6 if dist < want - 20 else 0.0)
             mv = [dx / n * rad - dy / n * side * 0.8, dy / n * rad + dx / n * side * 0.8]
-            if rad > 0 and not self.A.walk_clear(m.pos, us.pos):
-                mv = list(self.steer_house(m, us.pos))
+            if rad > 0 and not self.A.walk_clear(m.pos, T.pos):
+                mv = list(self.steer_house(m, T.pos))
             cmd["move"] = mv
             # aim with lead
             gs = 252.0
             tt = dist / gs
-            ax, ay = us.pos[0] + us.vel[0] * tt, us.pos[1] + us.vel[1] * tt
+            ax, ay = T.pos[0] + T.vel[0] * tt, T.pos[1] + T.vel[1] * tt
             yaw = math.atan2(ay - m.pos[1], ax - m.pos[0]) + self.r.gauss(0, aim_err)
-            pitch = math.atan2(us.pos[2] + 4.5 - (m.pos[2] + 7), dist)
+            pitch = math.atan2(T.pos[2] + 4.5 - (m.pos[2] + 7), dist)
             cmd["aim"] = [yaw, pitch]
             err = abs(wrap(m.aim[0] - yaw))
             cmd["fire"][0] = err < 0.05 and dist < 225
@@ -815,7 +828,7 @@ class Sim:
                 dead_house = sum(1 for m in self.mechs if not m.alive and m.id != self.ours)
                 n_h = 1 + dead_house + (15 if self.t > 300 else (int((self.t - 120) / 30) if self.t > 120 else 0))
                 self.hunters = {h for h in self.hunters if self.mechs[h].alive}
-                if len(self.hunters) < n_h:
+                if not FFA and len(self.hunters) < n_h:
                     # weakest-first squad: send the closest idle house bots, one at a time
                     idle = sorted([m.id for m in alive if m.id != self.ours and m.id not in self.hunters], key=lambda i: ({'easy': 0, 'medium': 1, 'hard': 2, 'expert': 3}[self.skill[i]], d2(self.mechs[i].pos, us.pos)))
                     self.hunters.update(idle[: n_h - len(self.hunters)])
