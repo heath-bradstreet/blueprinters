@@ -521,7 +521,8 @@ class Bot:
         if target is not None:
             # outgunned: low HP vs healthier enemy, or several enemies on us
             ehp = target.get("hp", 1400)
-            if (hp_frac < 0.15 and ehp > me["hp"] * 1.5) or (n_threats >= 3 and hp_frac < 0.25):
+            if (hp_frac < 0.5 and ehp > me["hp"] * 1.3) or (n_threats >= 3 and hp_frac < 0.6) or \
+               (n_threats >= 2 and hp_frac < 0.4) or (hp_frac < 0.22 and ehp > 200):
                 retreat = True
 
         dgoal = self.drop_goal(obs, me)
@@ -536,8 +537,6 @@ class Bot:
                 want = 120.0
             else:
                 want = 90.0
-            if target.get("hp", 1400) < 450 and hp_frac > 0.35:
-                want = min(want, 55.0)  # finish it before it regens
             tw = target.get("weapons") or []
             if "lightning" in tw and "lightning" not in kinds:
                 want = max(want, 70.0)  # stay out of their arc
@@ -764,8 +763,49 @@ class Bot:
             if dr.get("lands_in", 0) - eta > 6.0:
                 continue
             if best is None or dd < best[0]:
-                best = (dd, (q[0], q[1]))
-        return None if best is None else best[1]
+                best = (dd, (q[0], q[1]), dr)
+        if best is None:
+            return None
+        dd, q, dr = best
+        # don't stand in the open ring before it lands: wait out of sight close by, then rush in
+        rush = me["stats"].get("boost_speed", 19.5) * 0.8
+        if dr.get("lands_in", 0) > dd / rush + 0.8 and dd < 90:
+            st = self.stage_spot(obs, me, q)
+            if st is not None:
+                return st
+        return q
+
+    def stage_spot(self, obs, me, q):
+        t = obs["t"]
+        if getattr(self, "stage_t", -99) > t - 1.0 and getattr(self, "stage_q", None) == q:
+            return self.stage_pt
+        if self.spent() > 0.006 or not self.arena.ok:
+            return getattr(self, "stage_pt", None) if getattr(self, "stage_q", None) == q else None
+        A = self.arena
+        p = me["pos"]
+        th = [tr.pos for tr in self.tracks.values() if t - tr.seen_t < 10.0]
+        best = None
+        for r in (14.0, 24.0, 36.0):
+            for k in range(14):
+                a = TAU * k / 14
+                x, y = q[0] + r * math.cos(a), q[1] + r * math.sin(a)
+                c = A.ncell(x, y)
+                if c < 0 or A.nblocked[c] or not self.in_current(obs, (x, y), 8.0):
+                    continue
+                gz = A.ground(x, y)
+                seen = sum(1 for z in th if A.los((z[0], z[1], z[2] + 8.0), (x, y, gz + 7.0)))
+                # walls nearby make a spot safer even against enemies we have not seen yet
+                open_dirs = 0
+                for j in range(6):
+                    b = TAU * j / 6
+                    if A.los((x, y, gz + 7.0), (x + 60 * math.cos(b), y + 60 * math.sin(b), gz + 7.0)):
+                        open_dirs += 1
+                sc = seen * 1000 + open_dirs * 25 + r + 0.3 * d2(p, (x, y))
+                if best is None or sc < best[0]:
+                    best = (sc, (x, y))
+        self.stage_t, self.stage_q = t, q
+        self.stage_pt = None if best is None else best[1]
+        return self.stage_pt
 
     def fight_grab(self, obs, me, kinds, tdist):
         p = me["pos"]
