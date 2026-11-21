@@ -70,4 +70,5 @@ still overrates dodging; other builds land within noise of each other, as offici
 | Sat 2:05 PM | BB-8EE4E6D0 | 520d748 | Re-roll of the 4.17 build: RNG salt 0x6E7F only (sandbox PASS x2) | identical logic | 3.83 |
 | Sat 2:43 PM | BB-9F6C5032 | 7ea1f0a | Re-roll of the 4.17 build: RNG salt 0x7A8B only (sandbox PASS x2) | identical logic | 3.75 |
 | Sat 2:52 PM | BB-81A3A713 | 1d7c123 | Re-roll of the 4.17 build: RNG salt 0x8C9D only (sandbox PASS x2) | identical logic | 3.54 |
-| Sat 3:00 PM | BB-1F8D4F52 | a6c9055 | Re-roll of the 4.17 build: RNG salt 0x9EAF only (sandbox PASS x2) | identical logic | pending |
+| Sat 3:00 PM | BB-1F8D4F52 | a6c9055 | Re-roll of the 4.17 build: RNG salt 0x9EAF only (sandbox PASS x2) | identical logic | 3.42 |
+| Sat 3:09 PM | BB-FEC83B5E | 830e9d6 | Re-roll of the 4.17 build: RNG salt 0xA1B2 only (sandbox PASS x2) | identical logic | pending |
