@@ -76,7 +76,7 @@ class Bot:
     def __init__(self, hello):
         self.cfg = hello["config"]
         self.slot = int(hello.get("slot", 0))
-        self.rng = random.Random(int(hello.get("seed", 1)) ^ 0xA1B2)
+        self.rng = random.Random(int(hello.get("seed", 1)) ^ 0xB3C4)
         mp = hello.get("map") or {}
         t0 = time.perf_counter()
         self.arena = Arena(mp.get("dir", "/arena"), mp.get("files"))
