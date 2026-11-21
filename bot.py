@@ -76,7 +76,7 @@ class Bot:
     def __init__(self, hello):
         self.cfg = hello["config"]
         self.slot = int(hello.get("slot", 0))
-        self.rng = random.Random(int(hello.get("seed", 1)) ^ 0x6E7F)
+        self.rng = random.Random(int(hello.get("seed", 1)) ^ 0x5EED)
         mp = hello.get("map") or {}
         t0 = time.perf_counter()
         self.arena = Arena(mp.get("dir", "/arena"), mp.get("files"))
@@ -111,6 +111,7 @@ class Bot:
         self.known_crates = {}  # id -> (pos, seen_t)
         self.known_cubes = {}  # id -> (pos, seen_t)
         self.cover_t = -99.0
+        self.feint_side = 1
         self.t_start = time.perf_counter()
 
     # ------------------------------------------------------------------ helpers
@@ -921,6 +922,20 @@ class Bot:
                            and dist < laser["stats"].get("range", 280) - 10
                            and (laser.get("charge", 0) > 0 or laser.get("cooldown", 0) < 0.4))
             aimv = [lyaw, lpitch] if laser_first else [yaw, pitch]
+            # laser feint: everyone sees our charge and where it points, so good bots step off the line.
+            # Charge pointing beside the target, then flick onto it (0.45 rad = ~0.11 s at turn rate 4) and release.
+            if laser is not None and tgt.get("kind") == "mech" and dist > 50:
+                ch_ = laser.get("charge", 0.0)
+                full_ = laser["stats"].get("charge", 0.75)
+                turn = me["stats"].get("turn_rate", 4.0)
+                flick = 0.45 / max(1.0, turn) + 0.06
+                if 0 < ch_ < full_ - flick:
+                    if ch_ < 0.12:
+                        pass
+                    else:
+                        aimv = [wrap(lyaw + self.feint_side * 0.45), lpitch]
+                elif ch_ == 0 and laser.get("cooldown", 0) > 0.3:
+                    self.feint_side = 1 if self.rng.random() < 0.5 else -1
             radius = 2.5 if tgt.get("kind") == "mech" else (1.8 if tgt.get("kind") == "npc" else 1.4)
             tol = max(0.006, (radius * 0.7) / max(1.0, hd))
             ltol = max(0.005, (radius * 0.6) / max(1.0, lhd))
