@@ -199,7 +199,7 @@ class Bot:
             return unit(goal[0] - p[0], goal[1] - p[1])
         replan = (self.path is None or self.path_goal is None or d2(self.path_goal, goal) > 12
                   or t - self.path_t > 4.0)
-        if replan and t - self.path_t > 0.35 and self.spent() < 0.004:
+        if replan and t - self.path_t > 0.5 and self.spent() < 0.004:
             self.path_t = t
             self.path_goal = goal
             self.path = A.astar((p[0], p[1]), goal, max_exp=1000)
@@ -241,7 +241,7 @@ class Bot:
         p = me["pos"]
         if short:
             return self.find_short_cover(obs, me, threats_xyz, t, radius)
-        if self.cover_spot is not None and (t - self.cover_t < 1.0 or self.spent() > 0.003):
+        if self.cover_spot is not None and (t - self.cover_t < 1.5 or self.spent() > 0.003):
             return self.cover_spot
         if self.spent() > 0.005:
             return None
