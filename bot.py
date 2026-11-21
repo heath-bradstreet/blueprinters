@@ -575,9 +575,6 @@ class Bot:
                 mv = self.steer(me, cand, t)
                 move = (mv[0] * 0.85 + px_ * 0.35, mv[1] * 0.85 + py_ * 0.35)
                 boost = energy > 10
-                rm = self.ring_move(obs, me, dgoal, px_, py_) if mode == "drop" else None
-                if rm is not None:
-                    move, boost, mode = rm, False, "ring"
             else:
                 mode = "fight"
                 radial = 0.0
@@ -672,12 +669,6 @@ class Bot:
             if goal is not None:
                 move = self.steer(me, goal, t)
                 boost = urgency > 0.7 and energy > 20
-                if mode == "drop" and recent_dmg > 0 and self.last_damage_bearing is not None:
-                    # shot by someone we can't see while capturing: side-step across their line
-                    bx, by = math.cos(self.last_damage_bearing), math.sin(self.last_damage_bearing)
-                    rm = self.ring_move(obs, me, goal, -by * self.strafe_dir, bx * self.strafe_dir)
-                    if rm is not None:
-                        move, boost, mode = rm, False, "ring"
             # healing: walk slowly (silent under 5 m/s) when hurt and not in a hurry
             if goal is None or (hp_frac < 0.7 and urgency < 0.5 and mode != "zone"):
                 if goal is None:
@@ -770,32 +761,13 @@ class Bot:
             return None, "roam"
         return best[1], best[2]
 
-    def ring_move(self, obs, me, dgoal, px_, py_):
-        """Inside a landed drop's ring: side-step between two points 4 m either side of its centre."""
-        if dgoal is None:
-            return None
-        p = me["pos"]
-        if d2(p, dgoal) > 5.5:
-            return None
-        if not any(d2(dr["pos"], dgoal) < 1.0 and dr.get("lands_in", 0) <= 0 for dr in obs.get("drops") or []):
-            return None
-        if self.t > self.strafe_until:
-            self.strafe_dir = -self.strafe_dir
-            self.strafe_until = self.t + self.rng.uniform(0.5, 1.2)
-        sx, sy = dgoal[0] + px_ * 4.0, dgoal[1] + py_ * 4.0
-        ux, uy = unit(sx - p[0], sy - p[1])
-        k = min(1.0, d2(p, (sx, sy)) / 2.0)
-        return (ux * k, uy * k)
-
     def drop_goal(self, obs, me):
         """Supply drop worth heading for now (full HP + 3 cubes): leave so we arrive as it lands."""
         p = me["pos"]
         speed = me["stats"].get("walk_speed", 11.7) * 0.8
         best = None
         for dr in obs.get("drops") or []:
-            hold = dr.get("holder")
-            if hold is not None and hold != me["id"]:
-                continue
+            # someone else capturing it: still go - standing in the ring freezes their clock, and we shoot them first
             q = dr["pos"]
             dd = d2(p, q)
             if dd > 320 or not self.in_current(obs, q, 5.0):
