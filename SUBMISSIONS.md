@@ -68,4 +68,5 @@ still overrates dodging; other builds land within noise of each other, as offici
 | Sat 1:50 PM | BB-196A7899 | 2c5ecf8 | Re-roll of the 4.17 build: RNG salt 0x5C6D only (sandbox PASS x2) | n/a (identical logic) | 3.94 (final stays e72e3c0 4.17) |
 | Sat 1:58 PM | BB-DB0062F4 | ae416cf | Laser feint (from worker 80d804a) on the 4.17 build: from 0.12 s into a laser charge, aim 0.45 rad beside the target (random side), flick onto the lead ~0.17 s before full charge; release still waits for on-target aim (sandbox PASS x2, max 7.9 ms) | worker sim 64 matches: 4.48 vs 4.30, laser hit 76% unchanged (sim house bots don't pre-dodge) | 3.73 |
 | Sat 2:05 PM | BB-8EE4E6D0 | 520d748 | Re-roll of the 4.17 build: RNG salt 0x6E7F only (sandbox PASS x2) | identical logic | 3.83 |
-| Sat 2:43 PM | BB-9F6C5032 | 7ea1f0a | Re-roll of the 4.17 build: RNG salt 0x7A8B only (sandbox PASS x2) | identical logic | pending |
+| Sat 2:43 PM | BB-9F6C5032 | 7ea1f0a | Re-roll of the 4.17 build: RNG salt 0x7A8B only (sandbox PASS x2) | identical logic | 3.75 |
+| Sat 2:52 PM | BB-81A3A713 | 1d7c123 | Re-roll of the 4.17 build: RNG salt 0x8C9D only (sandbox PASS x2) | identical logic | pending |
