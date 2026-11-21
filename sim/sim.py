@@ -110,6 +110,20 @@ class Sim:
             self.pickups[pid] = {"id": pid, "kind": self.r.choice(["mortar", "laser", "lightning"]), "pos": [p[0], p[1], self.A.ground(*p)]}
             pid += 1
         self.pid = pid
+        self.crates = {}
+        for k in range(self.cfg["crates"]["count"]):
+            for _ in range(50):
+                p = (self.r.uniform(self.A.minx + 40, self.A.maxx - 40), self.r.uniform(self.A.miny + 40, self.A.maxy - 40))
+                c = self.A.ncell(*p)
+                if c >= 0 and not self.A.nblocked[c]:
+                    break
+            self.crates[1000 + k] = {"id": 1000 + k, "pos": [p[0], p[1], self.A.ground(*p)], "hp": float(self.cfg["crates"]["hp"])}
+        self.cubes = {}
+        self.cid = 5000
+        self.offers = []  # pending offers for our mech
+        self.offer_id = 0
+        self.armor = {}  # mech id -> damage reduction
+        self.plating = {}  # mech id -> max hp multiplier
         # some house bots start with a laser like the recorded hunter
         for m in self.mechs:
             if m.id != self.ours and self.r.random() < 0.5:
@@ -172,6 +186,73 @@ class Sim:
                 return False
         return self.A.los(eye, (b.pos[0], b.pos[1], b.pos[2] + 4.5)) or self.A.los(eye, (b.pos[0], b.pos[1], b.pos[2] + 9))
 
+    def sees_pt(self, a, q):
+        dd = d2(a.pos, q)
+        if dd > 200:
+            return False
+        if dd > 45:
+            yaw = math.atan2(q[1] - a.pos[1], q[0] - a.pos[0])
+            if abs(wrap(yaw - a.aim[0])) > math.radians(60):
+                return False
+        return self.A.los((a.pos[0], a.pos[1], a.pos[2] + 8), (q[0], q[1], q[2] + 1.0))
+
+    def spawn_cube(self, pos):
+        self.cubes[self.cid] = {"id": self.cid, "pos": [pos[0] + self.r.uniform(-2, 2), pos[1] + self.r.uniform(-2, 2), pos[2]]}
+        self.cid += 1
+
+    def give_cube(self, m):
+        m.cubes += 1
+        cc = self.cfg["cubes"]
+        old = m.max_hp
+        m.max_hp = self.cfg["mech"]["hp"] * (1 + cc["hp_per_cube"] * min(m.cubes, cc["stat_cap"])) * self.plating.get(m.id, 1.0)
+        m.hp += m.max_hp - old
+        m.events.append({"type": "pickup", "cubes": m.cubes})
+        if m.id == self.ours and m.cubes in cc["upgrade_thresholds"]:
+            ups = [u for u in self.cfg["upgrades"] if "requires" not in u or any(w and w["kind"] == u["requires"] for w in m.weapons)]
+            ch = self.r.sample(ups, 3)
+            self.offer_id += 1
+            self.offers.append({"id": self.offer_id, "expires": self.t + 5, "choices": [{"id": u["id"], "name": u["name"], "desc": u["desc"]} for u in ch]})
+
+    def apply_upgrade(self, m, uid):
+        m.events.append({"type": "upgrade", "id": uid})
+        if uid == "armor":
+            self.armor[m.id] = self.armor.get(m.id, 0) + 0.08
+        elif uid == "plating":
+            self.plating[m.id] = self.plating.get(m.id, 1.0) * 1.15
+            old = m.max_hp
+            m.max_hp *= 1.15
+            m.hp += m.max_hp - old
+
+    def cube_step(self):
+        r = self.cfg["cubes"]["pickup_radius"]
+        for cid in list(self.cubes):
+            c = self.cubes[cid]
+            best = None
+            for m in self.mechs:
+                if m.alive:
+                    dd = d2(m.pos, c["pos"])
+                    if dd < r and abs(m.pos[2] - c["pos"][2]) < 4 and (best is None or dd < best[0]):
+                        best = (dd, m)
+            if best:
+                del self.cubes[cid]
+                self.give_cube(best[1])
+        us = self.mechs[self.ours]
+        if self.offers and self.t > self.offers[0]["expires"]:
+            o = self.offers.pop(0)
+            self.apply_upgrade(us, o["choices"][0]["id"])
+
+    def crate_hit(self, crate, amount, attacker):
+        crate["hp"] -= amount
+        if attacker is not None and attacker.id == self.ours:
+            attacker.events.append({"type": "hit", "target": crate["id"], "amount": round(amount, 2), "weapon": "gun"})
+        if crate["hp"] <= 0:
+            del self.crates[crate["id"]]
+            self.spawn_cube(crate["pos"])
+            if self.r.random() < self.cfg["loot"]["crate_weapon_chance"]:
+                self.pickups[self.pid] = {"id": self.pid, "kind": self.r.choice(["mortar", "laser", "lightning"]), "pos": list(crate["pos"])}
+                self.pid += 1
+            self.sound(attacker or self.mechs[0], "crate")
+
     # ---------------------------------------------------------------- observation for our bot
     def observe(self, me):
         t = self.t
@@ -204,11 +285,11 @@ class Sim:
                 "self": {"id": me.id, "pos": [round(v, 2) for v in me.pos], "vel": [round(v, 2) for v in me.vel], "aim": [round(v, 3) for v in me.aim],
                          "hp": me.hp, "max_hp": me.max_hp, "energy": round(me.energy, 1), "max_energy": 100, "grounded": me.grounded,
                          "cubes": me.cubes, "upgrades": [], "weapons": w, "in_zone": in_zone, "stats": st},
-                "mechs": mechs, "projectiles": projs, "crates": [], "cubes": [], "pickups": pick, "sounds": snd, "beams": [],
+                "mechs": mechs, "projectiles": projs, "crates": [dict(c) for c in self.crates.values() if self.sees_pt(me, c["pos"])], "cubes": [dict(c) for c in self.cubes.values() if self.sees_pt(me, c["pos"])], "pickups": pick, "sounds": snd, "beams": [],
                 "events": ev, "drops": [],
                 "zone": {"center": [round(v, 2) for v in self.zc], "radius": round(self.zr, 2), "next_center": [round(v, 2) for v in self.nc],
                          "next_radius": self.nr, "shrink_start": self.s0, "shrink_end": self.s1, "dps": self.dps},
-                "offer": None}
+                "offer": self.offers[0] if self.offers else None}
 
     # ---------------------------------------------------------------- house bot brain
     def house(self, m):
@@ -293,6 +374,9 @@ class Sim:
     def damage(self, victim, amount, attacker, weapon, src=None):
         if not victim.alive or amount <= 0:
             return
+        if attacker is not None and weapon != "zone":
+            amount *= 1 + self.cfg["cubes"]["damage_per_cube"] * min(attacker.cubes, self.cfg["cubes"]["stat_cap"])
+            amount *= 1 - self.armor.get(victim.id, 0.0)
         rear = False
         if src is not None:
             yaw_from = math.atan2(src[1] - victim.pos[1], src[0] - victim.pos[0])
@@ -318,6 +402,8 @@ class Sim:
             if attacker is not None:
                 attacker.kills += 1
                 attacker.events.append({"type": "kill", "target": victim.id})
+            for _ in range(victim.cubes + self.cfg["cubes"]["death_drop_extra"]):
+                self.spawn_cube(victim.pos)
             if victim.weapons[1]:
                 self.pickups[self.pid] = {"id": self.pid, "kind": victim.weapons[1]["kind"], "pos": list(victim.pos)}
                 self.pid += 1
@@ -424,6 +510,11 @@ class Sim:
         m.cmd["boost"] = bool(a.get("boost"))
         m.cmd["fire"] = a.get("fire", [False, False])
         m.cmd["jump"] = bool(a.get("jump"))
+        if "pick" in a and self.offers and m.id == self.ours:
+            o = self.offers.pop(0)
+            i = int(a["pick"])
+            if 0 <= i < len(o["choices"]):
+                self.apply_upgrade(m, o["choices"][i]["id"])
         if "take" in a:
             pk = self.pickups.get(a["take"])
             if pk and d2(pk["pos"], m.pos) <= 4.0 and abs(pk["pos"][2] - m.pos[2]) < 4:
@@ -568,6 +659,13 @@ class Sim:
                 if p["left"] <= 0 or self.A.solid_at(pos[0], pos[1], pos[2]):
                     hit = True
                     break
+                for cr in list(self.crates.values()):
+                    if math.hypot(pos[0] - cr["pos"][0], pos[1] - cr["pos"][1]) < 1.7 and cr["pos"][2] - 0.3 < pos[2] < cr["pos"][2] + 2.7:
+                        self.crate_hit(cr, p["dmg"] * (1 + 0.04 * min(self.mechs[p["by"]].cubes, 10)), self.mechs[p["by"]])
+                        hit = True
+                        break
+                if hit:
+                    break
                 for o in self.mechs:
                     if o.alive and o.id != p["by"] and math.hypot(pos[0] - o.pos[0], pos[1] - o.pos[1]) < 2.8 and o.pos[2] - 0.3 < pos[2] < o.pos[2] + 9.3:
                         src = (pos[0] - p["vel"][0], pos[1] - p["vel"][1])
@@ -629,6 +727,7 @@ class Sim:
                         self.order.append((self.t, m.id))
                 elif self.t - m.last_combat > cfgm["regen_delay"]:
                     m.hp = min(m.max_hp, m.hp + cfgm["regen_per_s"] * self.dt)
+            self.cube_step()
             self.zone_step()
             self.t += self.dt
             self.tick += 1
@@ -658,7 +757,9 @@ def one(args):
     if loadout:
         s.mechs[s.ours].weapons[1] = s.weap(loadout)
     place, kills, t = s.run()
-    return {"seed": seed, "place": place, "kills": kills, "t": t, "times": s.times, "stats": s.stats, "failures": s.failures}
+    us = s.mechs[s.ours]
+    return {"seed": seed, "place": place, "kills": kills, "t": t, "times": s.times, "stats": s.stats, "failures": s.failures,
+            "cubes": us.cubes, "w2": us.weapons[1]["kind"] if us.weapons[1] else "-"}
 
 
 def run_batch(kit, botpath, seeds, loadout=None, procs=4):
@@ -681,7 +782,7 @@ def summarize(name, res):
             acc.append(f"{w} {st.get((w, 'hits'), 0)}/{sh} hit ({100 * st.get((w, 'hits'), 0) / sh:.0f}%), {st.get((w, 'dmg'), 0) / n:.0f} dmg/match")
     return (f"{name}: score {sum(16 - r['place'] for r in res) / n:.2f}  mean place {sum(r['place'] for r in res) / n:.2f}  "
             f"kills/match {sum(r['kills'] for r in res) / n:.2f}  survived {sum(r['t'] for r in res) / n:.0f}s  "
-            f"failures {sum(r['failures'] for r in res)}  act ms p99 {allt[int(len(allt) * 0.99)] * 1000:.1f} max {allt[-1] * 1000:.1f}\n    " + "; ".join(acc))
+            f"failures {sum(r['failures'] for r in res)}  act ms p99 {allt[int(len(allt) * 0.99)] * 1000:.1f} max {allt[-1] * 1000:.1f}\n    " + "; ".join(acc) + f"\n    cubes/match {sum(r['cubes'] for r in res) / n:.1f}  2nd weapon at death: " + str({k: sum(1 for r in res if r['w2'] == k) for k in ('laser', 'lightning', 'mortar', '-')}))
 
 
 def main():

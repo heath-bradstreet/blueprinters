@@ -103,6 +103,9 @@ class Bot:
         self.bad_pickups = {}
         self.wander_goal = None
         self.cover_spot = None
+        self.known_pickups = {}  # id -> (kind, pos, seen_t)
+        self.known_crates = {}  # id -> (pos, seen_t)
+        self.known_cubes = {}  # id -> (pos, seen_t)
         self.cover_t = -99.0
         self.t_start = time.perf_counter()
 
@@ -274,6 +277,29 @@ class Bot:
         return best[1]
 
     # ------------------------------------------------------------------ perception
+    def remember_items(self, obs, me):
+        """Items are only listed while in view; remember them so goals survive a scan or a turn."""
+        t = obs["t"]
+        p = me["pos"]
+        for pk in obs["pickups"]:
+            self.known_pickups[pk["id"]] = (pk["kind"], tuple(pk["pos"]), t)
+        for c in obs["crates"]:
+            self.known_crates[c["id"]] = (tuple(c["pos"]), t)
+        for c in obs["cubes"]:
+            self.known_cubes[c["id"]] = (tuple(c["pos"]), t)
+        vis_p = {x["id"] for x in obs["pickups"]}
+        vis_c = {x["id"] for x in obs["crates"]}
+        vis_q = {x["id"] for x in obs["cubes"]}
+        # forget things that should be visible from here but aren't (taken/destroyed), or are old
+        for store, vis, ttl in ((self.known_pickups, vis_p, 90.0), (self.known_crates, vis_c, 90.0), (self.known_cubes, vis_q, 40.0)):
+            for i in list(store):
+                v = store[i]
+                pos, seen = v[-2], v[-1]
+                if i in vis:
+                    continue
+                if t - seen > ttl or d2(p, pos) < 20:
+                    del store[i]
+
     def update_tracks(self, obs):
         t = obs["t"]
         for m in obs["mechs"]:
@@ -402,6 +428,7 @@ class Bot:
         me = obs["self"]
         p = me["pos"]
         self.update_tracks(obs)
+        self.remember_items(obs, me)
         act = {"tick": obs["tick"]}
 
         # upgrades
@@ -527,6 +554,12 @@ class Bot:
                         zc = obs["zone"]["next_center"]
                         zx, zy = unit(zc[0] - p[0], zc[1] - p[1])
                         move = (move[0] + zx * 1.2, move[1] + zy * 1.2)
+                # a better weapon or a cube close by is worth a detour mid-fight (still facing the target)
+                grab = self.fight_grab(obs, me, kinds, dist)
+                if grab is not None:
+                    gv = self.steer(me, grab, t)
+                    move = (gv[0] + px_ * 0.35, gv[1] + py_ * 0.35)
+                    mode = "grab"
                 # boost-strafe when under fire and we can afford it (keep energy for lightning)
                 reserve = 35 if "lightning" in kinds else 20
                 boost = energy > reserve and (recent_dmg > 0 or dist < 160)
@@ -538,7 +571,7 @@ class Bot:
             # no one in sight
             goal = None
             mode = "roam"
-            if zone_goal is not None and urgency > 0.25:
+            if zone_goal is not None and urgency > 0.6:
                 goal = zone_goal
                 mode = "zone"
             if goal is None and hp_frac < 0.75:
@@ -606,29 +639,42 @@ class Bot:
         t = obs["t"]
         best = None
         cur_rank = WEAPON_RANK.get(kinds[1], -1) if len(kinds) > 1 else -1
-        for pk in obs["pickups"]:
-            if t - self.bad_pickups.get(pk["id"], -99) < 5:
+        want_weapon = cur_rank < WEAPON_RANK["laser"]
+        for pid, (kind, pos, seen) in self.known_pickups.items():
+            if t - self.bad_pickups.get(pid, -99) < 5:
                 continue
-            if pk["kind"] in kinds:
+            if kind in kinds:
                 continue
-            r = WEAPON_RANK.get(pk["kind"], 0)
+            r = WEAPON_RANK.get(kind, 0)
             if r <= cur_rank:
                 continue
-            dd = d2(p, pk["pos"])
-            if dd > 150 or abs(pk["pos"][2] - p[2]) > 6:
+            dd = d2(p, pos)
+            reach = 260 if cur_rank < 0 else 160
+            if dd > reach or abs(pos[2] - p[2]) > 6:
                 continue
-            if not self.in_current(obs, pk["pos"], 10):
+            if not self.in_current(obs, pos, 10):
                 continue
-            s = dd - r * 25
+            s = dd - r * 30 - (60 if cur_rank < 0 else 0)
             if best is None or s < best[0]:
-                best = (s, (pk["pos"][0], pk["pos"][1]), "loot")
-        for c in obs["cubes"]:
-            dd = d2(p, c["pos"])
-            if dd > 80 or abs(c["pos"][2] - p[2]) > 6:
+                best = (s, (pos[0], pos[1]), "loot")
+        for cid, (pos, seen) in self.known_cubes.items():
+            dd = d2(p, pos)
+            if dd > 140 or abs(pos[2] - p[2]) > 6 or not self.in_current(obs, pos, 8):
                 continue
-            s = dd + 10
+            s = dd - 20
             if best is None or s < best[0]:
-                best = (s, (c["pos"][0], c["pos"][1]), "cube")
+                best = (s, (pos[0], pos[1]), "cube")
+        # crates: a cube each and often a weapon; walk into gun range of one we remember
+        if hp_frac > 0.5:
+            for cid, (pos, seen) in self.known_crates.items():
+                dd = d2(p, pos)
+                if dd > 200 or abs(pos[2] - p[2]) > 6 or not self.in_current(obs, pos, 10):
+                    continue
+                if dd < 35:
+                    continue  # close enough to shoot it (alt_target does that)
+                s = dd + (0 if want_weapon else 40)
+                if best is None or s < best[0]:
+                    best = (s, (pos[0], pos[1]), "crate")
         for dr in obs.get("drops") or []:
             dd = d2(p, dr["pos"])
             if dd > 220 or dr.get("lands_in", 0) > 12:
@@ -641,6 +687,26 @@ class Bot:
         if best is None:
             return None, "roam"
         return best[1], best[2]
+
+    def fight_grab(self, obs, me, kinds, tdist):
+        p = me["pos"]
+        t = obs["t"]
+        cur_rank = WEAPON_RANK.get(kinds[1], -1) if len(kinds) > 1 else -1
+        best = None
+        lim = 70.0 if cur_rank < 0 else 35.0
+        for pid, (kind, pos, seen) in self.known_pickups.items():
+            if kind in kinds or WEAPON_RANK.get(kind, 0) <= cur_rank or t - self.bad_pickups.get(pid, -99) < 5:
+                continue
+            dd = d2(p, pos)
+            if dd < lim and abs(pos[2] - p[2]) < 4 and (best is None or dd < best[0]):
+                best = (dd, pos)
+        for cid, (pos, seen) in self.known_cubes.items():
+            dd = d2(p, pos)
+            if dd < 25 and abs(pos[2] - p[2]) < 4 and (best is None or dd < best[0]):
+                best = (dd, pos)
+        if best is None:
+            return None
+        return (best[1][0], best[1][1])
 
     def loot_actions(self, obs, me, act, kinds, target):
         p = me["pos"]
@@ -672,7 +738,7 @@ class Bot:
         # both full: swap slot 1 if this one is better, unless its laser is charging
         if r > WEAPON_RANK.get(w1["kind"], 0) and not (w1["kind"] == "laser" and w1.get("charge", 0) > 0):
             # don't swap mid-fight against a close target (equip delay)
-            if target is None or d2(p, target["pos"]) > 120:
+            if target is None or d2(p, target["pos"]) > 60:
                 act["take"] = pk["id"]
                 act["drop"] = 1
 
@@ -819,7 +885,7 @@ class Bot:
         if best is None:
             for c in obs["crates"]:
                 dd = d2(p, c["pos"])
-                if dd < 70:
+                if dd < 90:
                     s = dd + 30
                     if best is None or s < best[0]:
                         best = (s, {"pos": c["pos"], "vel": (0, 0, 0), "kind": "crate"})
