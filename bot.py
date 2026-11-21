@@ -525,8 +525,7 @@ class Bot:
         if target is not None:
             # outgunned: low HP vs healthier enemy, or several enemies on us
             ehp = target.get("hp", 1400)
-            if (hp_frac < 0.5 and ehp > me["hp"] * 1.3) or (n_threats >= 3 and hp_frac < 0.6) or \
-               (n_threats >= 2 and hp_frac < 0.4) or (hp_frac < 0.22 and ehp > 200):
+            if (hp_frac < 0.15 and ehp > me["hp"] * 1.5) or (n_threats >= 3 and hp_frac < 0.25):
                 retreat = True
 
         dgoal = self.drop_goal(obs, me)
@@ -541,6 +540,8 @@ class Bot:
                 want = 120.0
             else:
                 want = 90.0
+            if target.get("hp", 1400) < 450 and hp_frac > 0.35:
+                want = min(want, 55.0)  # finish it before it regens
             tw = target.get("weapons") or []
             if "lightning" in tw and "lightning" not in kinds:
                 want = max(want, 70.0)  # stay out of their arc
@@ -719,11 +720,8 @@ class Bot:
             if kind in kinds:
                 continue
             r = WEAPON_RANK.get(kind, 0)
-            pair = kinds[0] == "gun" and kinds[1] in ("laser", "lightning") and kind in ("laser", "lightning")
-            if r <= cur_rank and not pair:
+            if r <= cur_rank:
                 continue
-            if pair:
-                r = 3
             dd = d2(p, pos)
             reach = 260 if cur_rank < 0 else 160
             if dd > reach or abs(pos[2] - p[2]) > 6:
@@ -865,20 +863,11 @@ class Bot:
                 continue
             if best is None or r > best[0]:
                 best = (r, pk)
-        w1 = me["weapons"][1] if len(me["weapons"]) > 1 else None
-        w0 = me["weapons"][0]
-        # laser + lightning, no gun: swap the gun out for the weapon we lack
-        if w0 is not None and w0["kind"] == "gun" and w1 is not None and w1["kind"] in ("laser", "lightning"):
-            want = "lightning" if w1["kind"] == "laser" else "laser"
-            for pk in obs["pickups"]:
-                if pk["kind"] == want and d2(p, pk["pos"]) <= reach - 0.3 and abs(pk["pos"][2] - p[2]) <= 3.8 \
-                        and t - self.bad_pickups.get(pk["id"], -99) >= 3 and (target is None or d2(p, target["pos"]) > 60):
-                    act["take"] = pk["id"]
-                    act["drop"] = 0
-                    return
         if best is None:
             return
         r, pk = best
+        w1 = me["weapons"][1] if len(me["weapons"]) > 1 else None
+        w0 = me["weapons"][0]
         if w0 is None:
             act["take"] = pk["id"]
             return
