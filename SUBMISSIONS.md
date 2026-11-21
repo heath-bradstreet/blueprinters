@@ -29,3 +29,4 @@ are mostly that reshuffle, not real effects.
 | Sat 12:36 AM | BB-EAD76374 | 3602aa6 | Re-roll 1: best build with only the RNG seed changed | - | 3.94 (identical score; re-rolls stopped, cutoff is now 4.54) |
 | Sat 12:55 AM | BB-A6784835 | c853500 | Heal lock: stay out and hold fire until 90% HP | level | 3.54 (reverted) |
 | Sat 1:03 AM | BB-282BA7DC | 7e06233 | Laser pre-charge behind cover (on best build) | level | 3.75 (reverted) |
+| Sat 1:21 AM | BB-4C20EB97 | e62fcb4 | Bullet dodging (step off the line of incoming bullets) | 3.50 vs 2.38, 3.24 vs 2.35 | 3.81 (reverted; sim gain did not carry over) |

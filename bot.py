@@ -644,15 +644,6 @@ class Bot:
                 if goal is None:
                     move = (0.0, 0.0)
 
-        # dodge incoming bullets (wave-surfing idea from Robocode): shooters lead our current velocity,
-        # so step sideways off the line of any bullet that would pass within a body width
-        if mode not in ("zone",) and obs.get("projectiles"):
-            dv = self.dodge(me, obs["projectiles"])
-            if dv is not None:
-                move = (dv[0] * 1.0 + move[0] * 0.35, dv[1] * 1.0 + move[1] * 0.35)
-                boost = boost or energy > 12
-                mode = mode if mode != "fight" else "dodge"
-
         # unstick
         want_move = math.hypot(*move) > 0.3
         if self.check_stuck(me, want_move, t) or t < self.unstick_until:
@@ -684,46 +675,6 @@ class Bot:
 
         self.mode = mode
         return act
-
-    def dodge(self, me, projs):
-        """Unit 2D direction away from the nearest bullet that is on course to hit us, or None."""
-        p = me["pos"]
-        v = me.get("vel", (0.0, 0.0, 0.0))
-        worst = None
-        for b in projs:
-            if b.get("kind") not in ("gun", None):
-                continue
-            bp, bv = b["pos"], b["vel"]
-            rx, ry = bp[0] - p[0], bp[1] - p[1]
-            vx, vy = bv[0] - v[0], bv[1] - v[1]
-            vv = vx * vx + vy * vy
-            if vv < 1.0:
-                continue
-            tca = -(rx * vx + ry * vy) / vv
-            if tca <= 0.0 or tca > 0.7:
-                continue
-            mx, my = rx + vx * tca, ry + vy * tca
-            miss = math.hypot(mx, my)
-            if miss > 3.6:
-                continue
-            if worst is None or tca < worst[0]:
-                worst = (tca, bv, mx, my, miss)
-        if worst is None:
-            return None
-        tca, bv, mx, my, miss = worst
-        bx, by = unit(bv[0], bv[1])
-        px_, py_ = -by, bx  # perpendicular to the bullet's path
-        # go to the side we're already offset toward (the bullet passes on the other side)
-        side = -1.0 if (mx * px_ + my * py_) > 0 else 1.0
-        if abs(mx * px_ + my * py_) < 0.3:
-            side = 1.0 if (v[0] * px_ + v[1] * py_) >= 0 else -1.0  # keep current sideways momentum
-        dx, dy = px_ * side, py_ * side
-        A = self.arena
-        if A.ok and not A.walk_clear(p, (p[0] + dx * 6, p[1] + dy * 6)):
-            dx, dy = -dx, -dy
-            if not A.walk_clear(p, (p[0] + dx * 6, p[1] + dy * 6)):
-                return None
-        return (dx, dy)
 
     # ------------------------------------------------------------------ loot
     def loot_goal(self, obs, me, kinds, hp_frac):
