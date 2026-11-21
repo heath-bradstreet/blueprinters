@@ -525,6 +525,7 @@ class Bot:
                (n_threats >= 2 and hp_frac < 0.4) or (hp_frac < 0.22 and ehp > 200):
                 retreat = True
 
+        dgoal = self.drop_goal(obs, me)
         if target is not None:
             tp = target["pos"]
             dist = d2(p, tp)
@@ -595,6 +596,13 @@ class Bot:
                     gv = self.steer(me, grab, t)
                     move = (gv[0] + px_ * 0.35, gv[1] + py_ * 0.35)
                     mode = "grab"
+                if dgoal is not None:
+                    if d2(p, dgoal) > 3.5:
+                        gv = self.steer(me, dgoal, t)
+                        move = (gv[0] + px_ * 0.25, gv[1] + py_ * 0.25)
+                    else:
+                        move = (px_ * 0.3, py_ * 0.3)
+                    mode = "drop"
                 # boost-strafe when under fire and we can afford it (keep energy for lightning)
                 reserve = 35 if "lightning" in kinds else 20
                 boost = energy > reserve and (recent_dmg > 0 or dist < 160)
@@ -617,6 +625,9 @@ class Bot:
             if zone_goal is not None and urgency > 0.6:
                 goal = zone_goal
                 mode = "zone"
+            if dgoal is not None and (urgency <= 0.6 or zone_goal is None):
+                goal = dgoal
+                mode = "drop"
             if goal is None and hp_frac < 0.75:
                 recent = [tr.pos for tr in self.tracks.values() if t - tr.seen_t < 25.0]
                 if recent:
@@ -730,6 +741,26 @@ class Bot:
         if best is None:
             return None, "roam"
         return best[1], best[2]
+
+    def drop_goal(self, obs, me):
+        """Supply drop worth heading for now (full HP + 3 cubes): leave so we arrive as it lands."""
+        p = me["pos"]
+        speed = me["stats"].get("walk_speed", 11.7) * 0.8
+        best = None
+        for dr in obs.get("drops") or []:
+            hold = dr.get("holder")
+            if hold is not None and hold != me["id"]:
+                continue
+            q = dr["pos"]
+            dd = d2(p, q)
+            if dd > 320 or not self.in_current(obs, q, 5.0):
+                continue
+            eta = dd / max(1.0, speed)
+            if dr.get("lands_in", 0) - eta > 6.0:
+                continue
+            if best is None or dd < best[0]:
+                best = (dd, (q[0], q[1]))
+        return None if best is None else best[1]
 
     def fight_grab(self, obs, me, kinds, tdist):
         p = me["pos"]
