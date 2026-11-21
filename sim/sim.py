@@ -17,7 +17,8 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FFA = os.environ.get("MECH_FFA") == "1"  # 16-mech free-for-all (qualifying/final format) instead of practice squad
+FFA = os.environ.get("MECH_FFA") == "1"
+AIMK = float(os.environ.get("MECH_AIMK", "1"))  # scale house-bot aim error (calibration)  # 16-mech free-for-all (qualifying/final format) instead of practice squad
 sys.path.insert(0, os.path.dirname(HERE))
 from arena import Arena  # noqa: E402
 import bot as B  # noqa: E402
@@ -405,6 +406,7 @@ class Sim:
         us = self.mechs[self.ours]
         skill = self.skill[m.id]
         aim_err = {"easy": 0.05, "medium": 0.03, "hard": 0.015, "expert": 0.008}[skill]
+        aim_err *= AIMK
         hunting = m.id in self.hunters and us.alive
         cmd = {"move": [0, 0], "aim": m.cmd.get("aim", [0, 0]), "boost": False, "fire": [False, False]}
         # squad vision: anyone sees us -> all know

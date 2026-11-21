@@ -564,6 +564,10 @@ class Bot:
                 if cov is not None:
                     cand = cov
                     mode = "cover"
+                if dgoal is not None:
+                    # a supply drop is a full repair: retreat onto it rather than just away
+                    cand = dgoal
+                    mode = "drop"
                 mv = self.steer(me, cand, t)
                 move = (mv[0] * 0.85 + px_ * 0.35, mv[1] * 0.85 + py_ * 0.35)
                 boost = energy > 10
