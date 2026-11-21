@@ -189,11 +189,13 @@ class Selector:
     wrong. Degrading loudly on stderr beats a silent 300 s.
     """
 
-    def __init__(self, cov, aux, tests: list[dict], translate=None, extra=()):
+    def __init__(self, cov, aux, tests: list[dict], translate=None, extra=(), symref=None):
         self.cov = cov
         self.aux = aux
+        self.symref = symref
         self.translate = translate
         self.all_tests = {t["number"] for t in tests}
+        self.num_of = {t["id"]: t["number"] for t in tests}
         self.tests_by_file: dict[str, set[int]] = {}
         for t in tests:
             self.tests_by_file.setdefault(t["file"], set()).add(t["number"])
@@ -230,6 +232,48 @@ class Selector:
         if not hit:
             return set(self.all_tests)
         return self._xlate(hit)
+
+    def _symref_tests(self, path: str, modlines: set[int]):
+        """Tests that execute a line REFERENCING what the changed line binds.
+
+        The sharp backstop for a module-level change. A module-level edit
+        changes the value or shape of a named thing -- a class, a constant, a
+        def, an import binding -- and code can only observe that change by
+        reading the name. So the tests that can fail are a subset of the tests
+        executing a line that references the name, and that is computable
+        offline from the pinned tree.
+
+        Why it is needed: per-test-FILE coverage, the previous backstop, says
+        every one of the 58 test files touches sqlglot/expressions/ddl.py,
+        because they all import it. It therefore returns ~1617 of 1620 tests --
+        run-all -- on commits whose truth is frequently zero failing tests.
+        Symref answers ktz3's ddl.py edit with 28 tests instead of 1617.
+
+        Returns None whenever the index cannot answer soundly, and the caller
+        then widens exactly as before. That happens when a changed line binds
+        no name at all (a bare call, a docstring), when the name closure fans
+        out pathologically, or when a reference sits in a shared tests/ module
+        that declares no tests of its own -- tests/helpers.py has 1377
+        importers and no tests, so resolving it to "tests in that file" would
+        silently discard the evidence.
+        """
+        if self.symref is None or not self.symref.has_file(path):
+            return None
+        try:
+            res = self.symref.resolve(path, sorted(modlines))
+            if res.unresolved or res.empty:
+                return None
+            return self.symref.tests_for_locations(
+                res,
+                # Coverage answers in the numbers the map was BUILT with, so
+                # translate; the other two sources are already current numbers.
+                line_tests=lambda f, ls: self._xlate(self.cov.tests_for_lines(f, ls)),
+                tests_in_file=lambda f: set(self.tests_by_file.get(f, ())),
+                test_number=self.num_of.get,
+            )
+        except Exception as exc:  # noqa: BLE001 -- a backstop must never raise
+            print(f"symref failed on {path}: {exc!r}; widening", file=sys.stderr)
+            return None
 
     def select(self, changed: dict[str, set[int]]) -> set[int]:
         if self.cov is None or self.aux is None:
@@ -295,9 +339,14 @@ class Selector:
             sel |= self._xlate(self.cov.tests_for_lines(path, lines))
 
             # 4. module-level changes need a backstop
-            if self.aux.module_level_lines(path, lines):
+            modlines = self.aux.module_level_lines(path, lines)
+            if modlines:
                 fam = self._dialect_family(path)
-                sel |= fam if fam else self._filemap_tests(path)
+                if fam:
+                    sel |= fam
+                else:
+                    got = self._symref_tests(path, modlines)
+                    sel |= self._filemap_tests(path) if got is None else got
 
         return sel & self.all_tests
 
@@ -363,19 +412,29 @@ def _open_maps():
         import brmap
     except Exception as exc:  # noqa: BLE001
         print(f"map modules unavailable ({exc!r}); running everything", file=sys.stderr)
-        return None, None
+        return None, None, None
     try:
         cov = brmap.DepMap(os.path.join(MAPS, "cov.brdm"))
     except Exception as exc:  # noqa: BLE001
         print(f"cov.brdm unavailable ({exc!r}); running everything", file=sys.stderr)
-        return None, None
+        return None, None, None
     try:
         aux = auxmap.AuxMaps(os.path.join(MAPS, "aux.brs"))
     except Exception as exc:  # noqa: BLE001
         print(f"aux.brs unavailable ({exc!r}); running everything", file=sys.stderr)
         cov.close()
-        return None, None
-    return cov, aux
+        return None, None, None
+    # The symbol-reference index is the one map we can run WITHOUT: losing it
+    # only costs seconds, because the module-level rung falls back to
+    # per-test-file coverage, which is what we shipped before it existed.
+    try:
+        import symref as symref_mod
+
+        sym = symref_mod.SymRef(os.path.join(MAPS, "symref.json.gz"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"symref unavailable ({exc!r}); using the wider backstop", file=sys.stderr)
+        sym = None
+    return cov, aux, sym
 
 
 def main() -> None:
@@ -389,8 +448,13 @@ def main() -> None:
     dur = {t["number"]: int(t["seconds"] * 1000 + 0.5) for t in tests}
     valid = set(dur)
 
-    cov, aux = _open_maps()
-    selector = Selector(cov, aux, tests)
+    cov, aux, sym = _open_maps()
+    translate, extra = (None, set())
+    try:
+        translate, extra = _translation(tests)
+    except Exception as exc:  # noqa: BLE001
+        print(f"testids.txt unreadable ({exc!r}); assuming unchanged numbering", file=sys.stderr)
+    selector = Selector(cov, aux, tests, translate, extra, sym)
 
     commits_dir = os.path.join(DATA, "commits")
     commit_ids = sorted(

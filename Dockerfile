@@ -25,15 +25,23 @@ RUN mkdir -p /app/maps && chmod 0755 /app /app/maps
 COPY selector.py /app/selector.py
 COPY brmap.py /app/brmap.py
 COPY auxmap.py /app/auxmap.py
+COPY symref.py /app/symref.py
 
 # cov.brdm  per-test LINE coverage, corrected for sqlglot's spawned subprocesses
 # aux.brs   fixture reads, per-test-file coverage, module-level line ranges,
 #           and the tests no coverage row mentions at all
+# symref.json.gz  which tests execute a line REFERENCING each module-level
+#                  binding -- the sharp backstop for a module-level change
+# testids.txt      the (number, id) pairs the maps were built from, so a
+#                  renumbered suite is translated rather than silently misread
 COPY maps/cov.brdm /app/maps/cov.brdm
 COPY maps/aux.brs /app/maps/aux.brs
+COPY maps/symref.json.gz /app/maps/symref.json.gz
+COPY maps/testids.txt /app/maps/testids.txt
 
-RUN chmod 0444 /app/selector.py /app/brmap.py /app/auxmap.py \
-               /app/maps/cov.brdm /app/maps/aux.brs
+RUN chmod 0444 /app/selector.py /app/brmap.py /app/auxmap.py /app/symref.py \
+               /app/maps/cov.brdm /app/maps/aux.brs \
+               /app/maps/symref.json.gz /app/maps/testids.txt
 
 # Run unprivileged. The scorer also passes --user 65534:65534; setting it here
 # means the image is correct on its own and never depends on root.
