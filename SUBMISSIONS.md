@@ -39,4 +39,4 @@ Note (Sat 3:05 AM): sim recalibrated with MECH_AIMK=2.5 (house aim error x2.5, m
 recorded from real house bots); best build now scores ~4.1 in sim vs ~3.9-4.0 official. Replay of 9 builds with known
 official scores: fortress correctly lowest (3.65), but bullet dodging still reads +0.9 in sim (official 3.81), so the sim
 still overrates dodging; other builds land within noise of each other, as officially.
-| Sat 3:23 AM | BB-4A1457FD | 2a238b3 | On 4.04 build: drop rush reaches drops up to 450 m and leaves up to 12 s early (sandbox PASS, max 11 ms) | calibrated sim 4.36 vs 4.19 (seed sets 7 and 11 overlap 60 of 64 matches, so effectively one A/B) | pending |
+| Sat 3:23 AM | BB-4A1457FD | 2a238b3 | On 4.04 build: drop rush reaches drops up to 450 m and leaves up to 12 s early (sandbox PASS, max 11 ms) | calibrated sim 4.36 vs 4.19 (seed sets 7 and 11 overlap 60 of 64 matches, so effectively one A/B) | 3.83 (reverted) |
