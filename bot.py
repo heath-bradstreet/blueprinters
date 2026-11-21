@@ -780,8 +780,8 @@ class Bot:
                 best = (dd, pos)
         for cid, (pos, seen) in self.known_cubes.items():
             dd = d2(p, pos)
-            if dd < 25 and abs(pos[2] - p[2]) < 4 and (best is None or dd < best[0]):
-                best = (dd, pos)
+            if dd < 70 and abs(pos[2] - p[2]) < 6 and (best is None or dd - 30 < best[0]):
+                best = (dd - 30, pos)
         if best is None:
             return None
         return (best[1][0], best[1][1])
