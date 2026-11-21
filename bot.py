@@ -104,6 +104,7 @@ class Bot:
         self.wander_goal = None
         self.cover_spot = None
         self.cover_t = -99.0
+        self.t_start = time.perf_counter()
 
     # ------------------------------------------------------------------ helpers
     def wstat(self, kind, key, default=0.0):
@@ -191,10 +192,10 @@ class Bot:
             return unit(goal[0] - p[0], goal[1] - p[1])
         replan = (self.path is None or self.path_goal is None or d2(self.path_goal, goal) > 12
                   or t - self.path_t > 4.0)
-        if replan and t - self.path_t > 0.5:
+        if replan and t - self.path_t > 0.5 and self.spent() < 0.010:
             self.path_t = t
             self.path_goal = goal
-            self.path = A.astar((p[0], p[1]), goal)
+            self.path = A.astar((p[0], p[1]), goal, max_exp=2500)
         if self.path:
             # drop reached waypoints, then head for the furthest one we can walk to straight
             while len(self.path) > 1 and d2(p, self.path[0]) < 4.0:
@@ -231,8 +232,10 @@ class Bot:
         if not A.ok:
             return None
         p = me["pos"]
-        if self.cover_spot is not None and t - self.cover_t < 1.5:
+        if self.cover_spot is not None and (t - self.cover_t < 1.5 or self.spent() > 0.010):
             return self.cover_spot
+        if self.spent() > 0.015:
+            return None
         self.cover_t = t
         best = None
         cands = []
@@ -388,7 +391,12 @@ class Bot:
         return yaw, ang
 
     # ------------------------------------------------------------------ main decision
+    def spent(self):
+        """Seconds of this decision's 50 ms budget already used."""
+        return time.perf_counter() - self.t_start
+
     def act(self, obs):
+        self.t_start = time.perf_counter()
         t = obs["t"]
         self.t = t
         me = obs["self"]
