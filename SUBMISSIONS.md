@@ -33,3 +33,9 @@ are mostly that reshuffle, not real effects.
 | Sat 2:07 AM | BB-7265B0C7 | d444666 | Fortress: precomputed exposure map, hold walled pockets so hunters arrive one at a time (sandbox check PASS, max 7 ms) | 1.92 vs 2.23, 2.00 vs 2.34 (survives 35% longer, fewer kills) | 3.40 (reverted; sim direction was right) |
 | Sat 2:22 AM | BB-1AE599E0 | dbc32ef | Supply-drop rush: leave for a called drop to arrive as it lands (full HP + 3 cubes), hold the ring while fighting (sandbox PASS, max 8.5 ms) | 2.34 vs 2.23, 2.39 vs 2.34 (sim rarely lives to the 95 s drop) | **4.02 NEW BEST (final)** |
 | Sat 2:34 AM | BB-B354C9CC | 4a9844d | On 4.02 build: hunt NPC drones (2 cubes each) when healthy and no mech in sight (sandbox PASS, max 7.1 ms) | seeds 7/11: 2.44, 2.16 vs 2.34, 2.39 (even) | 3.75 (reverted) |
+| Sat 3:07 AM | BB-4DCED27C | e572f31 | On 4.02 build: when retreating, retreat onto a reachable supply drop (full repair) (sandbox PASS, max 12 ms) | calibrated sim (house aim x2.5): 4.20 vs 4.11 | pending |
+
+Note (Sat 3:05 AM): sim recalibrated with MECH_AIMK=2.5 (house aim error x2.5, matching the ~25% laser hit rate
+recorded from real house bots); best build now scores ~4.1 in sim vs ~3.9-4.0 official. Replay of 9 builds with known
+official scores: fortress correctly lowest (3.65), but bullet dodging still reads +0.9 in sim (official 3.81), so the sim
+still overrates dodging; other builds land within noise of each other, as officially.
