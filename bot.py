@@ -521,8 +521,7 @@ class Bot:
         if target is not None:
             # outgunned: low HP vs healthier enemy, or several enemies on us
             ehp = target.get("hp", 1400)
-            if (hp_frac < 0.5 and ehp > me["hp"] * 1.3) or (n_threats >= 3 and hp_frac < 0.6) or \
-               (n_threats >= 2 and hp_frac < 0.4) or (hp_frac < 0.22 and ehp > 200):
+            if (hp_frac < 0.15 and ehp > me["hp"] * 1.5) or (n_threats >= 3 and hp_frac < 0.25):
                 retreat = True
 
         dgoal = self.drop_goal(obs, me)
@@ -537,6 +536,8 @@ class Bot:
                 want = 120.0
             else:
                 want = 90.0
+            if target.get("hp", 1400) < 450 and hp_frac > 0.35:
+                want = min(want, 55.0)  # finish it before it regens
             tw = target.get("weapons") or []
             if "lightning" in tw and "lightning" not in kinds:
                 want = max(want, 70.0)  # stay out of their arc
